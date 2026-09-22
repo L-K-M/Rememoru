@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Runtime dependencies: none — the tool is pure stdlib over ctypes, so
+  # there is no manifest for Dependabot to watch. Workflow actions only.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

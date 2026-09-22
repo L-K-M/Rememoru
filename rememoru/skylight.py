@@ -135,6 +135,10 @@ class Connection(object):
         # tile sub-space id -> outer space id (fullscreen/split-view windows
         # report the tile id via SLSCopySpacesForWindows, not the outer one)
         self.tile_parents = {}
+        # CG window id -> outer space id, taken straight from the
+        # TileWindowID/fs_wid fields — authoritative for every window on a
+        # fullscreen or tiled space regardless of SpacesForWindows shape
+        self.tile_window_spaces = {}
 
     # -- enumeration -------------------------------------------------------
     def managed_displays(self):
@@ -163,6 +167,7 @@ class Connection(object):
         so we build tile_parents to translate them to the outer space."""
         out = []
         self.tile_parents = {}
+        self.tile_window_spaces = {}
         for d in self.managed_displays():
             disp_uuid = d.get("Display Identifier")
             current_id = (d.get("Current Space") or {}).get("ManagedSpaceID")
@@ -184,11 +189,17 @@ class Connection(object):
                 layout = tlm.get("Layout Rect") or {}
                 tiles_info = []
                 for tile in tiles:
-                    tsid = tile.get("ManagedSpaceID") or tile.get("id64")
-                    if tsid is not None:
-                        self.tile_parents[int(tsid)] = int(sid)
+                    # inside a tile dict, ManagedSpaceID is the PARENT
+                    # space id while id64 is the tile's own sub-space id —
+                    # windows may report either, so map both
+                    for key in ("id64", "ManagedSpaceID"):
+                        tsid = tile.get(key)
+                        if tsid is not None:
+                            self.tile_parents[int(tsid)] = int(sid)
                     tr = tile.get("TileRect") or {}
                     wid = tile.get("TileWindowID") or tile.get("fs_wid")
+                    if wid is not None:
+                        self.tile_window_spaces[int(wid)] = int(sid)
                     tiles_info.append({
                         "window_id": int(wid) if wid is not None else None,
                         "pid": tile.get("pid"),
@@ -217,23 +228,45 @@ class Connection(object):
                 out.append(entry)
         return out
 
-    def spaces_for_windows(self, window_ids):
-        """Parallel list of space ids for the given CG window numbers."""
+    def spaces_for_windows_raw(self, window_ids):
+        """Unfiltered SLSCopySpacesForWindows result — element i belongs to
+        window_ids[i] but may be an int, a list (multi-space window), or
+        some other value depending on macOS version."""
         if not SLSCopySpacesForWindows or not window_ids:
-            return [None] * len(window_ids)
+            return []
         warr = cf.cfarray_of_ints(window_ids)
         res = SLSCopySpacesForWindows(self.cid, K_CGS_ALL_SPACES_MASK, warr)
         cf.CFRelease(warr)
         if not res:
-            return [None] * len(window_ids)
+            return []
         try:
-            vals = cf.to_py(res) or []
+            return cf.to_py(res) or []
         finally:
             cf.CFRelease(res)
-        vals = [v if isinstance(v, int) else None for v in vals]
-        if len(vals) < len(window_ids):
-            vals += [None] * (len(window_ids) - len(vals))
-        return vals[: len(window_ids)]
+
+    def spaces_for_windows(self, window_ids):
+        """Parallel list of space ids for the given CG window numbers."""
+        vals = self.spaces_for_windows_raw(window_ids)
+        if not vals:
+            return [None] * len(window_ids)
+        out = []
+        for v in vals:
+            if isinstance(v, int):
+                out.append(v)
+            elif isinstance(v, (list, tuple)):
+                # multi-space window: prefer a tile id we can translate to
+                # its parent space, else the first int element
+                ints = [e for e in v if isinstance(e, int)]
+                pick = next(
+                    (e for e in ints if e in self.tile_parents),
+                    ints[0] if ints else None,
+                )
+                out.append(pick)
+            else:
+                out.append(None)
+        if len(out) < len(window_ids):
+            out += [None] * (len(window_ids) - len(out))
+        return out[: len(window_ids)]
 
     # -- mutation ----------------------------------------------------------
     def set_active_space(self, display_uuid, space_id):
