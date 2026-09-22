@@ -174,5 +174,80 @@ class RestoreTest(unittest.TestCase):
         self.assertIs(r.live_for(r.snap["windows"][1]), None)
 
 
+# condensed from a real macOS 26.7 SLSCopyManagedDisplaySpaces dump:
+# split view = type-4 space whose TileLayoutManager has 2 TileSpaces;
+# solo fullscreen = type 4 with 1 tile; windows report tile sub-space ids
+MACOS26_D = [{
+    "Display Identifier": "d26",
+    "Current Space": {"ManagedSpaceID": 409, "id64": 409, "type": 4},
+    "Spaces": [
+        {"ManagedSpaceID": 39, "id64": 39, "uuid": "user-u", "type": 0},
+        {"ManagedSpaceID": 65, "id64": 65, "uuid": "fs-u", "type": 4,
+         "fs_wid": 569, "pid": 602,
+         "TileLayoutManager": {
+             "Layout Rect": {"X": 4872.0, "Y": -76.0,
+                             "Width": 1920.0, "Height": 1080.0},
+             "TileSpaces": [{
+                 "ManagedSpaceID": 67, "id64": 67, "uuid": "t67",
+                 "TileWindowID": 569, "fs_wid": 569, "type": 5,
+                 "TileType": "Primary", "pid": 602, "appName": "Slack",
+                 "name": "Slack win",
+                 "TileRect": {"X": 4872.0, "Y": -76.0,
+                              "Width": 1920.0, "Height": 1080.0}}]},
+            },
+        {"ManagedSpaceID": 409, "id64": 409, "uuid": "sv-u", "type": 4,
+         "fs_wid": 2398, "pid": [597, 609],
+         "WallSpace": {"ManagedSpaceID": 409, "id64": 410,
+                       "uuid": "w-u", "type": 6},
+         "TileLayoutManager": {
+             "Layout Rect": {"X": 4872.0, "Y": -76.0,
+                             "Width": 1920.0, "Height": 1080.0},
+             "TileSpaces": [{
+                 "ManagedSpaceID": 411, "id64": 411, "uuid": "t411",
+                 "TileWindowID": 599, "fs_wid": 599, "type": 5,
+                 "TileType": "Primary", "pid": 597,
+                 "appName": "WhatsApp", "name": "WhatsApp",
+                 "TileRect": {"X": 4872.0, "Y": -76.0,
+                              "Width": 970.0, "Height": 1080.0}},
+                {"ManagedSpaceID": 425, "id64": 425, "uuid": "t425",
+                 "TileWindowID": 2398, "fs_wid": 2398, "type": 5,
+                 "TileType": "Primary", "pid": 609,
+                 "appName": "WeChat", "name": "WeChat",
+                 "TileRect": {"X": 5854.0, "Y": -76.0,
+                              "Width": 938.0, "Height": 1080.0}}]},
+            },
+    ],
+}]
+
+
+class SpacesParsingTest(unittest.TestCase):
+    def _conn(self):
+        conn = object.__new__(skylight.Connection)
+        conn.cid = 0
+        conn.managed_displays = lambda: MACOS26_D
+        return conn
+
+    def test_macos26_tiled_detection(self):
+        conn = self._conn()
+        spaces = conn.spaces()
+        by_id = {s["id"]: s for s in spaces}
+        self.assertEqual(by_id[39]["type_name"], "user")
+        # solo fullscreen (1 tile) stays fullscreen
+        self.assertEqual(by_id[65]["type_name"], "fullscreen")
+        self.assertEqual(by_id[65]["type"], 4)
+        # 2 tiles -> split view
+        sv = by_id[409]
+        self.assertEqual(sv["type"], 5)
+        self.assertEqual(sv["type_name"], "tiled")
+        self.assertTrue(sv["active"])
+        self.assertEqual({t["app"]: t["side"] for t in sv["tiles"]},
+                         {"WhatsApp": "left", "WeChat": "right"})
+        self.assertEqual(sv["tiles"][0]["window_id"], 599)
+        # tile sub-space ids translate to the outer space
+        self.assertEqual(conn.tile_parents[67], 65)
+        self.assertEqual(conn.tile_parents[411], 409)
+        self.assertEqual(conn.tile_parents[425], 409)
+
+
 if __name__ == "__main__":
     unittest.main()

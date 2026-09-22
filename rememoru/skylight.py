@@ -81,7 +81,8 @@ SLSHideSpaces = _bind(
 
 K_CGS_ALL_SPACES_MASK = 0x7
 
-SPACE_TYPE_NAMES = {0: "user", 2: "system", 4: "fullscreen", 5: "tiled"}
+SPACE_TYPE_NAMES = {0: "user", 2: "system", 4: "fullscreen", 5: "tiled",
+                    6: "wall"}
 
 _bridge_checked = False
 _bridge_perform = None
@@ -131,6 +132,9 @@ class Connection(object):
         if not SLSMainConnectionID:
             raise RuntimeError("SLSMainConnectionID not found")
         self.cid = SLSMainConnectionID()
+        # tile sub-space id -> outer space id (fullscreen/split-view windows
+        # report the tile id via SLSCopySpacesForWindows, not the outer one)
+        self.tile_parents = {}
 
     # -- enumeration -------------------------------------------------------
     def managed_displays(self):
@@ -150,8 +154,15 @@ class Connection(object):
 
     def spaces(self):
         """Flattened space list: [{id, uuid, type, type_name, display_uuid,
-        index, active}] in Mission Control order per display."""
+        index, active, tiles?}] in Mission Control order per display.
+
+        macOS 26 reports EVERY fullscreen-ish space as type 4; a real
+        Split View pair is a type-4 space whose TileLayoutManager has 2+
+        TileSpaces entries (single-app fullscreen has exactly 1). Tile
+        entries carry their own ManagedSpaceID — windows report those —
+        so we build tile_parents to translate them to the outer space."""
         out = []
+        self.tile_parents = {}
         for d in self.managed_displays():
             disp_uuid = d.get("Display Identifier")
             current_id = (d.get("Current Space") or {}).get("ManagedSpaceID")
@@ -164,18 +175,46 @@ class Connection(object):
                 sid = s.get("ManagedSpaceID") or s.get("id64")
                 if sid is None:
                     continue
-                t = self.space_type(sid)
-                out.append(
-                    {
-                        "id": int(sid),
-                        "uuid": s.get("uuid"),
-                        "type": t,
-                        "type_name": SPACE_TYPE_NAMES.get(t, "unknown(%s)" % t),
-                        "display_uuid": disp_uuid,
-                        "index": i,
-                        "active": sid == current_id,
-                    }
-                )
+                tlm = s.get("TileLayoutManager") or {}
+                tiles = tlm.get("TileSpaces") or []
+                t = s.get("type")
+                if t is None:
+                    t = self.space_type(sid)
+                tiled = t == 4 and len(tiles) >= 2
+                layout = tlm.get("Layout Rect") or {}
+                tiles_info = []
+                for tile in tiles:
+                    tsid = tile.get("ManagedSpaceID") or tile.get("id64")
+                    if tsid is not None:
+                        self.tile_parents[int(tsid)] = int(sid)
+                    tr = tile.get("TileRect") or {}
+                    wid = tile.get("TileWindowID") or tile.get("fs_wid")
+                    tiles_info.append({
+                        "window_id": int(wid) if wid is not None else None,
+                        "pid": tile.get("pid"),
+                        "app": tile.get("appName"),
+                        "title": tile.get("name"),
+                        "side": ("left" if tr.get("X", 1e18)
+                                 <= layout.get("X", 0) + 1 else "right"),
+                        "rect": {
+                            "x": tr.get("X"), "y": tr.get("Y"),
+                            "w": tr.get("Width"), "h": tr.get("Height"),
+                        },
+                    })
+                eff = 5 if tiled else t
+                entry = {
+                    "id": int(sid),
+                    "uuid": s.get("uuid"),
+                    "type": eff,
+                    "type_name": SPACE_TYPE_NAMES.get(
+                        eff, "unknown(%s)" % eff),
+                    "display_uuid": disp_uuid,
+                    "index": i,
+                    "active": sid == current_id,
+                }
+                if tiles_info:
+                    entry["tiles"] = tiles_info
+                out.append(entry)
         return out
 
     def spaces_for_windows(self, window_ids):

@@ -99,8 +99,10 @@ def current_windows(sls_conn):
         )
         wids.append(int(wid))
     space_ids = sls_conn.spaces_for_windows(wids)
+    tile_parents = getattr(sls_conn, "tile_parents", {}) or {}
     for w, sid in zip(wins, space_ids):
-        w["space_id"] = sid
+        # windows on fullscreen/split-view spaces report the tile sub-space
+        w["space_id"] = tile_parents.get(sid, sid)
     bundle_ids = _bundle_ids([w["pid"] for w in wins])
     for w in wins:
         w["bundle_id"] = bundle_ids.get(w["pid"])
@@ -121,15 +123,29 @@ def capture(log=print):
         w["space_type"] = s["type_name"] if s else None
         w["display_uuid"] = s["display_uuid"] if s else None
 
-    # side for windows living on a tiled (split-view) space
+    # side for windows living on a tiled (split-view) space — prefer the
+    # TileLayoutManager metadata (macOS 26), fall back to frame x-order
     by_space = {}
     for w in windows:
         by_space.setdefault(w.get("space_id"), []).append(w)
     for sid, ws in by_space.items():
         s = space_by_id.get(sid)
-        if s and s["type"] == 5:
-            for i, w in enumerate(sorted(ws, key=lambda w: w["frame"]["x"])):
-                w["side"] = "left" if i == 0 else "right"
+        if not s or s["type"] != 5:
+            continue
+        side_of_wid = {
+            t["window_id"]: t["side"]
+            for t in s.get("tiles") or [] if t.get("window_id")
+        }
+        leftover = []
+        for w in ws:
+            side = side_of_wid.get(w["id"])
+            if side:
+                w["side"] = side
+            else:
+                leftover.append(w)
+        for i, w in enumerate(sorted(leftover,
+                                     key=lambda w: w["frame"]["x"])):
+            w["side"] = "left" if i == 0 else "right"
 
     disp_list = []
     for d in displays:
