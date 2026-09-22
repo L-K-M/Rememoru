@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 rememoru-*.json
 rememoru-snapshot.json
+dist/

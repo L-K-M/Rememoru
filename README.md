@@ -1,5 +1,8 @@
 # Rememoru
 
+> [!IMPORTANT]
+> LLM disclosure: This codebase was written with substantial help from large language models: AI coding agents working from the [`AGENTS.md`](AGENTS.md) brief in this repo.
+
 Snapshot and restore your macOS window layout — displays, Spaces, fullscreen
 windows, Split View pairs, and space order — **with SIP fully enabled**.
 
