@@ -7,5 +7,3 @@ bridged WindowServer move operation that still works under SIP.
 """
 
 __version__ = "0.1.0"
-
-__version__ = "0.1.0"
