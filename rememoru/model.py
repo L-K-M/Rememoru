@@ -100,9 +100,11 @@ def current_windows(sls_conn):
         wids.append(int(wid))
     space_ids = sls_conn.spaces_for_windows(wids)
     tile_parents = getattr(sls_conn, "tile_parents", {}) or {}
+    tile_wins = getattr(sls_conn, "tile_window_spaces", {}) or {}
     for w, sid in zip(wins, space_ids):
-        # windows on fullscreen/split-view spaces report the tile sub-space
-        w["space_id"] = tile_parents.get(sid, sid)
+        # windows on fullscreen/split-view spaces report the tile sub-space;
+        # prefer the TileWindowID channel which is version-independent
+        w["space_id"] = tile_wins.get(w["id"], tile_parents.get(sid, sid))
     bundle_ids = _bundle_ids([w["pid"] for w in wins])
     for w in wins:
         w["bundle_id"] = bundle_ids.get(w["pid"])

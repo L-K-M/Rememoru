@@ -156,13 +156,34 @@ def cmd_restore(args):
     return r.run()
 
 
-def cmd_dump(_args):
+def cmd_dump(args):
     """Raw SkyLight display/space dicts + CG displays — debugging data."""
     sls = skylight.Connection()
     print("=== SLSCopyManagedDisplaySpaces ===")
     print(json.dumps(sls.managed_displays(), indent=2, default=str))
     print("=== cg.displays ===")
     print(json.dumps(cg.displays(), indent=2, default=str))
+    sls.spaces()  # populate tile_parents
+    wins = cg.window_list()
+    sample = [
+        {
+            "id": int(w.get("kCGWindowNumber") or 0),
+            "app": w.get("kCGWindowOwnerName"),
+            "title": w.get("kCGWindowName"),
+            "pid": w.get("kCGWindowOwnerPID"),
+        }
+        for w in wins[: args.windows]
+    ]
+    wids = [w["id"] for w in sample]
+    raw = sls.spaces_for_windows_raw(wids)
+    print("=== SLSCopySpacesForWindows (first %d windows) ==="
+          % len(sample))
+    print("window count: %d, result count: %d" % (len(wids), len(raw)))
+    print(json.dumps([
+        {"wid": w["id"], "app": w["app"], "title": w["title"],
+         "pid": w["pid"], "raw": r}
+        for w, r in zip(sample, raw)
+    ] + [w for w in sample[len(raw):]], indent=2, default=str))
     return 0
 
 
@@ -258,8 +279,12 @@ def main(argv=None):
                         help="dump Dock/Mission Control AX tree")
     pi.add_argument("--depth", type=int, default=14)
 
-    sub.add_parser("dump",
-                   help="dump raw SkyLight/CG display+space data (debugging)")
+    pd = sub.add_parser(
+        "dump",
+        help="dump raw SkyLight/CG display+space data (debugging)")
+    pd.add_argument("--windows", type=int, default=60,
+                    help="how many windows to include in the "
+                         "SLSCopySpacesForWindows section (default: 60)")
 
     args = p.parse_args(argv)
     if args.cmd != "doctor" and sys.platform != "darwin":
