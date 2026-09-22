@@ -74,10 +74,40 @@ Runs a phased restore, skipping whatever is no longer available:
                     Mission Control thumbnail click
 ```
 
+## Restore automatically at login
+
+`contrib/com.rememoru.restore.plist` is a LaunchAgent that waits 60
+seconds after login (so login apps can finish opening their windows),
+then runs `restore --launch --verbose`, logging to
+`/tmp/rememoru-restore.log`.
+
+```sh
+cp contrib/com.rememoru.restore.plist ~/Library/LaunchAgents/
+# edit the two paths inside: checkout dir + snapshot file
+launchctl bootstrap gui/$(id -u) \
+    ~/Library/LaunchAgents/com.rememoru.restore.plist
+```
+
+Permission note: under launchd the Accessibility grant attaches to
+`python3` itself rather than your terminal. If the log says Accessibility
+is missing, add `/usr/bin/python3` under System Settings → Privacy &
+Security → Accessibility. That grant covers every Python script — for a
+dedicated entry, wrap the restore command in an Automator app and add the
+app to Login Items instead.
+
+```sh
+# test once without waiting for a login:
+launchctl kickstart gui/$(id -u)/com.rememoru.restore
+
+# stop it running at login:
+launchctl bootout gui/$(id -u)/com.rememoru.restore
+```
+
 ## Debugging
 
 ```sh
-./rememoru-cli dump        # raw SkyLight display/space dicts + CG displays
+./rememoru-cli dump        # raw SkyLight display/space dicts, CG displays,
+                           # and raw per-window space-query results
 ./rememoru-cli inspect-mc  # dump Dock/Mission Control AX tree
 ```
 
