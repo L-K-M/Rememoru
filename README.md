@@ -85,13 +85,16 @@ its own Accessibility/Screen Recording grant, so you don't hand AX to
 `python3` globally:
 
 ```sh
-contrib/install-login-app.sh   # builds ~/Applications/RememoruRestore.app
+contrib/install-login-app.sh   # interactive setup → ~/Applications/RememoruRestore.app
 ```
 
-Then: System Settings → General → Login Items → add "RememoruRestore",
-run it once (`open ~/Applications/RememoruRestore.app`) and approve the
-permission prompts. Edit `contrib/rememoru-login.applescript` first if
-your checkout/snapshot paths differ from the defaults.
+The installer asks for the `rememoru-cli` path, the snapshot file to
+restore (defaults to the newest `rememoru-*.json` it finds, and offers to
+capture one if none exists), and the post-login delay — then compiles the
+app and can add it to Login Items for you. Run the app once
+(`open ~/Applications/RememoruRestore.app`) and approve the permission
+prompts. Non-interactive use: `REMEMORU_CLI=… REMEMORU_SNAPSHOT=…
+REMEMORU_DELAY=… REMEMORU_NONINTERACTIVE=1 contrib/install-login-app.sh`.
 
 **Option B — LaunchAgent** (`contrib/com.rememoru.restore.plist`), for a
 headless setup without an app bundle:
