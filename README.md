@@ -76,32 +76,41 @@ Runs a phased restore, skipping whatever is no longer available:
 
 ## Restore automatically at login
 
-`contrib/com.rememoru.restore.plist` is a LaunchAgent that waits 60
-seconds after login (so login apps can finish opening their windows),
-then runs `restore --launch --verbose`, logging to
+Two options. Both wait 60 seconds after login — so login apps can finish
+opening their windows — then run `restore --launch --verbose`, logging to
 `/tmp/rememoru-restore.log`.
+
+**Option A — AppleScript Login Item (recommended).** A real `.app` gets
+its own Accessibility/Screen Recording grant, so you don't hand AX to
+`python3` globally:
+
+```sh
+contrib/install-login-app.sh   # builds ~/Applications/RememoruRestore.app
+```
+
+Then: System Settings → General → Login Items → add "RememoruRestore",
+run it once (`open ~/Applications/RememoruRestore.app`) and approve the
+permission prompts. Edit `contrib/rememoru-login.applescript` first if
+your checkout/snapshot paths differ from the defaults.
+
+**Option B — LaunchAgent** (`contrib/com.rememoru.restore.plist`), for a
+headless setup without an app bundle:
 
 ```sh
 cp contrib/com.rememoru.restore.plist ~/Library/LaunchAgents/
 # edit the two paths inside: checkout dir + snapshot file
 launchctl bootstrap gui/$(id -u) \
     ~/Library/LaunchAgents/com.rememoru.restore.plist
-```
 
-Permission note: under launchd the Accessibility grant attaches to
-`python3` itself rather than your terminal. If the log says Accessibility
-is missing, add `/usr/bin/python3` under System Settings → Privacy &
-Security → Accessibility. That grant covers every Python script — for a
-dedicated entry, wrap the restore command in an Automator app and add the
-app to Login Items instead.
-
-```sh
-# test once without waiting for a login:
+# test without logging out / uninstall:
 launchctl kickstart gui/$(id -u)/com.rememoru.restore
-
-# stop it running at login:
 launchctl bootout gui/$(id -u)/com.rememoru.restore
 ```
+
+Note: under launchd the Accessibility grant attaches to `python3` itself
+rather than your terminal — if the log says Accessibility is missing, add
+`/usr/bin/python3` under System Settings → Privacy & Security →
+Accessibility.
 
 ## Debugging
 
