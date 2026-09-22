@@ -79,6 +79,9 @@ def cmd_doctor(_args):
     print("separate spaces per display: %s"
           % ("yes" if sep else "NO — enable in System Settings → Desktop & Dock"))
 
+    print("CGDisplayCreateUUIDFromDisplayID: %s"
+          % ("ok" if cg.CGDisplayCreateUUIDFromDisplayID else "MISSING"))
+
     print("\nSkyLight bindings:")
     for name, ok in skylight.available_symbols().items():
         print("  %-36s %s" % (name, "ok" if ok else "MISSING"))
@@ -92,7 +95,7 @@ def cmd_doctor(_args):
 
 def cmd_list(_args):
     sls = skylight.Connection()
-    displays = cg.displays()
+    displays = model.display_list(sls, log=print)
     spaces = sls.spaces()
     wins = model.current_windows(sls)
     by_space = {}
@@ -151,6 +154,16 @@ def cmd_restore(args):
         return 1
     r = Restorer(snap, _opts(args))
     return r.run()
+
+
+def cmd_dump(_args):
+    """Raw SkyLight display/space dicts + CG displays — debugging data."""
+    sls = skylight.Connection()
+    print("=== SLSCopyManagedDisplaySpaces ===")
+    print(json.dumps(sls.managed_displays(), indent=2, default=str))
+    print("=== cg.displays ===")
+    print(json.dumps(cg.displays(), indent=2, default=str))
+    return 0
 
 
 def cmd_inspect_mc(args):
@@ -245,6 +258,9 @@ def main(argv=None):
                         help="dump Dock/Mission Control AX tree")
     pi.add_argument("--depth", type=int, default=14)
 
+    sub.add_parser("dump",
+                   help="dump raw SkyLight/CG display+space data (debugging)")
+
     args = p.parse_args(argv)
     if args.cmd != "doctor" and sys.platform != "darwin":
         print("rememoru only runs on macOS (this is %s)." % sys.platform)
@@ -255,6 +271,7 @@ def main(argv=None):
         "snapshot": cmd_snapshot,
         "restore": cmd_restore,
         "inspect-mc": cmd_inspect_mc,
+        "dump": cmd_dump,
     }[args.cmd](args)
 
 

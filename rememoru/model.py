@@ -40,6 +40,30 @@ def _bundle_ids(pids):
     return out
 
 
+def display_list(sls_conn, log=None):
+    """Displays with frames (CoreGraphics) joined to SLS 'Display Identifier'
+    UUIDs. CGDisplayCreateUUIDFromDisplayID is gone on macOS 26, so when CG
+    can't produce a uuid we join by enumeration order — CGGetActiveDisplayList
+    and SLSCopyManagedDisplaySpaces iterate the same hardware order."""
+    disps = cg.displays()
+    if disps and all(d["uuid"] for d in disps):
+        return disps
+    try:
+        uuids = [
+            m.get("Display Identifier") for m in sls_conn.managed_displays()
+        ]
+    except Exception:
+        uuids = []
+    if len(uuids) == len(disps) and all(uuids):
+        if log:
+            log("note: display UUIDs taken from SkyLight order "
+                "(CGDisplayCreateUUIDFromDisplayID unavailable)")
+        for d, u in zip(disps, uuids):
+            if not d["uuid"]:
+                d["uuid"] = u
+    return disps
+
+
 def current_windows(sls_conn):
     """Live window list, each with space_id attached."""
     raw = cg.window_list()
@@ -86,7 +110,7 @@ def current_windows(sls_conn):
 def capture(log=print):
     """Return the full snapshot dict."""
     sls = skylight.Connection()
-    displays = cg.displays()
+    displays = display_list(sls, log=log)
     spaces = sls.spaces()  # ordered per display
     windows = current_windows(sls)
 
@@ -132,6 +156,7 @@ def capture(log=print):
                 "uuid": s["uuid"],
                 "id": s["id"],
                 "type": s["type_name"],
+                "type_id": s["type"],
                 "display_uuid": s["display_uuid"],
                 "index": s["index"],
                 "active": s["active"],
