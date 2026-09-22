@@ -42,7 +42,7 @@ class Restorer(object):
         for i, w in enumerate(self.snap["windows"]):
             w["_i"] = i
         self.sls = skylight.Connection()
-        self.displays = cg.displays()
+        self.displays = model.display_list(self.sls, log=log)
         self.display_by_uuid = {d["uuid"]: d for d in self.displays}
         self.failed = []      # human-readable failure lines
         self.missing = []     # snapshot windows with no live match
