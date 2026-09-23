@@ -91,10 +91,14 @@ contrib/install-login-app.sh   # interactive setup → ~/Applications/RememoruRe
 The installer asks for the `rememoru-cli` path, the snapshot file to
 restore (defaults to the newest `rememoru-*.json` it finds, and offers to
 capture one if none exists), and the post-login delay — then compiles the
-app and can add it to Login Items for you. Run the app once
-(`open ~/Applications/RememoruRestore.app`) and approve the permission
-prompts. Non-interactive use: `REMEMORU_CLI=… REMEMORU_SNAPSHOT=…
-REMEMORU_DELAY=… REMEMORU_NONINTERACTIVE=1 contrib/install-login-app.sh`.
+app and can add it to Login Items for you.
+
+On first run the app checks its own Accessibility grant; if missing it
+opens the Accessibility settings pane and waits — toggle
+"RememoruRestore" on and click Retry (macOS only shows its own grant
+prompt once, so the app drives this itself). Non-interactive installer
+use: `REMEMORU_CLI=… REMEMORU_SNAPSHOT=… REMEMORU_DELAY=…
+REMEMORU_NONINTERACTIVE=1 contrib/install-login-app.sh`.
 
 **Option B — LaunchAgent** (`contrib/com.rememoru.restore.plist`), for a
 headless setup without an app bundle:
