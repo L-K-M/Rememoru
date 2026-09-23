@@ -581,11 +581,17 @@ class Restorer(object):
                 self.log("note: Accessibility not granted — dry-run only,"
                          " no changes will be made anyway.")
             else:
-                self.log("ERROR: Accessibility permission required.")
-                self.log("  System Settings → Privacy & Security"
-                         " → Accessibility")
-                self.log("  → enable your terminal / python3.")
-                return 2
+                ax.prompt_trusted()  # native "grant access" dialog
+                for _ in range(30):  # grace period if granted right now
+                    if ax.trusted():
+                        break
+                    time.sleep(1)
+                if not ax.trusted():
+                    self.log("ERROR: Accessibility permission required.")
+                    self.log("  System Settings → Privacy & Security"
+                             " → Accessibility")
+                    self.log("  → enable the app/terminal running this.")
+                    return 2
 
         disp_map = self._disp_map()
 

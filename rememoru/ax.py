@@ -40,6 +40,9 @@ def _f(name, restype, argtypes):
 
 
 AXIsProcessTrusted = _f("AXIsProcessTrusted", ctypes.c_bool, [])
+AXIsProcessTrustedWithOptions = _f(
+    "AXIsProcessTrustedWithOptions", ctypes.c_bool, [ctypes.c_void_p]
+)
 AXUIElementCreateApplication = _f(
     "AXUIElementCreateApplication", ctypes.c_void_p, [ctypes.c_int32]
 )
@@ -95,6 +98,23 @@ AX_ERROR_SUCCESS = 0
 
 def trusted():
     return bool(AXIsProcessTrusted) and bool(AXIsProcessTrusted())
+
+
+def prompt_trusted():
+    """Trigger the native TCC prompt ("<app> would like to control this
+    computer") via AXIsProcessTrustedWithOptions, then return the current
+    trust state. Without this the app context just fails silently."""
+    if not AXIsProcessTrustedWithOptions:
+        return trusted()
+    # the real key is the exported kAXTrustedCheckOptionPrompt constant;
+    # a CFString with equal contents works identically as a dict key
+    opts = cf.cfdict(
+        [(cf.cfstr("AXTrustedCheckOptionPrompt"), cf.kCFBooleanTrue)]
+    )
+    try:
+        return bool(AXIsProcessTrustedWithOptions(opts))
+    finally:
+        cf.CFRelease(opts)
 
 
 def _copy_attr(el, name):
