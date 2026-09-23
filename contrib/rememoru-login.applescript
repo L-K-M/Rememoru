@@ -23,7 +23,11 @@ if axStatus is not "0" then return
 
 delay __DELAY_SECONDS__
 try
-	do shell script (quoted form of cliPath) & " restore " & (quoted form of snapshotPath) & " --launch --verbose >> " & (quoted form of logPath) & " 2>&1"
+	-- do shell script inherits the ~2-minute AppleEvent timeout; a real
+	-- restore can run far longer, and a timeout may kill it mid-flight
+	with timeout of 3600 seconds
+		do shell script (quoted form of cliPath) & " restore " & (quoted form of snapshotPath) & " --launch --verbose >> " & (quoted form of logPath) & " 2>&1"
+	end timeout
 on error errMsg number errNum
 	set tailText to ""
 	try
