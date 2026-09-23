@@ -93,6 +93,12 @@ def cmd_doctor(_args):
     return 0
 
 
+def cmd_check_ax(_args):
+    """Exit 0 if this process has Accessibility permission — used by the
+    login app (TCC attributes the check to the app itself) and scripts."""
+    return 0 if ax.trusted() else 1
+
+
 def cmd_list(_args):
     sls = skylight.Connection()
     displays = model.display_list(sls, log=print)
@@ -240,6 +246,9 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="check permissions and API availability")
+    sub.add_parser("check-ax",
+                   help="exit 0 iff this process has Accessibility "
+                        "permission (for scripts/login app)")
     sub.add_parser("list", help="show current display/space/window layout")
 
     ps = sub.add_parser("snapshot", help="capture current layout to JSON")
@@ -292,6 +301,7 @@ def main(argv=None):
         return 1
     return {
         "doctor": cmd_doctor,
+        "check-ax": cmd_check_ax,
         "list": cmd_list,
         "snapshot": cmd_snapshot,
         "restore": cmd_restore,
