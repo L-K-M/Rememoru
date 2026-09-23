@@ -137,6 +137,25 @@ CFDictionaryGetKeysAndValues = _f(
 CFUUIDCreateString = _f(
     "CFUUIDCreateString", ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p]
 )
+CFDictionaryCreate = _f(
+    "CFDictionaryCreate",
+    ctypes.c_void_p,
+    [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, CFIndex,
+     ctypes.c_void_p, ctypes.c_void_p],
+)
+
+
+def cfdict(pairs):
+    """Build a CFDictionary from [(key_ref, value_ref), ...] using NULL
+    callbacks — the elements are NOT retained, so use cfstr()/static
+    constants that outlive the dict."""
+    def addr(v):
+        return v.value if isinstance(v, ctypes.c_void_p) else v
+
+    n = len(pairs)
+    keys = (ctypes.c_void_p * n)(*[addr(k) for k, _ in pairs])
+    vals = (ctypes.c_void_p * n)(*[addr(v) for _, v in pairs])
+    return CFDictionaryCreate(None, keys, vals, n, None, None)
 
 def __getattr__(name):
     # kCFBooleanTrue / kCFBooleanFalse — resolved lazily via in_dll
