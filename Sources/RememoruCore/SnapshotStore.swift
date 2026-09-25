@@ -5,7 +5,10 @@ public struct SnapshotStore {
     public struct Entry: Equatable, Sendable {
         public var url: URL
         public var name: String
-        public var modified: Date
+        /// When the layout was saved: the stamp in the file name, else the
+        /// file's modification time. Copying a file changes the latter, so
+        /// a copied-in old snapshot must not count as the newest.
+        public var date: Date
     }
 
     public let directory: URL
@@ -32,11 +35,12 @@ public struct SnapshotStore {
         return urls
             .filter { $0.pathExtension == "json" }
             .map { url in
+                let name = url.deletingPathExtension().lastPathComponent
                 let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                     .contentModificationDate ?? .distantPast
-                return Entry(url: url, name: url.deletingPathExtension().lastPathComponent, modified: modified)
+                return Entry(url: url, name: name, date: Self.stampDate(in: name) ?? modified)
             }
-            .sorted { $0.modified != $1.modified ? $0.modified > $1.modified : $0.name > $1.name }
+            .sorted { $0.date != $1.date ? $0.date > $1.date : $0.name > $1.name }
     }
 
     public var latest: Entry? { list().first }
@@ -57,6 +61,16 @@ public struct SnapshotStore {
 
     public func load(_ url: URL) throws -> Snapshot {
         try Snapshot.decode(Data(contentsOf: url))
+    }
+
+    /// Parses the yyyyMMdd-HHmmss stamp that both this app ("layout-…")
+    /// and the Python version ("rememoru-…") put in file names.
+    static func stampDate(in name: String) -> Date? {
+        guard let range = name.range(of: #"\d{8}-\d{6}"#, options: .regularExpression) else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.date(from: String(name[range]))
     }
 
     static func fileStamp(_ date: Date) -> String {

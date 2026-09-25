@@ -143,4 +143,19 @@ final class SnapshotStoreTests: XCTestCase {
         XCTAssertEqual(store.list().count, 2)
         XCTAssertEqual(try store.load(first), snapshot)
     }
+
+    func testLatestIsByCaptureTimeNotFileTime() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rememoru-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SnapshotStore(directory: dir)
+        let snapshot = Snapshot(created: "c", displays: [], spaces: [], windows: [])
+        let saved = try store.save(snapshot, date: Date(timeIntervalSince1970: 1_800_000_000))
+        // an old Python snapshot copied in afterwards has the newest mtime
+        let copied = dir.appendingPathComponent("rememoru-20200101-080000.json")
+        try snapshot.encoded().write(to: copied)
+
+        XCTAssertEqual(store.latest?.url, saved)
+        XCTAssertEqual(store.list().map(\.url), [saved, copied])
+    }
 }

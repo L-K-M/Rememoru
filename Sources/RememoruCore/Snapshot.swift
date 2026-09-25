@@ -34,6 +34,15 @@ public struct Snapshot: Codable, Equatable, Sendable {
         windows.filter { $0.spaceUUID == uuid }
     }
 
+    /// Index of the window that fills a fullscreen space: the largest one.
+    /// Windows are saved front to back, so the first member can be a panel
+    /// floating over the fullscreen window.
+    public func primaryWindowIndex(onSpace uuid: String) -> Int? {
+        windows.indices
+            .filter { windows[$0].spaceUUID == uuid }
+            .max { windows[$0].frame.w * windows[$0].frame.h < windows[$1].frame.w * windows[$1].frame.h }
+    }
+
     /// Ordinal of a desktop among the desktops of its display, in Mission
     /// Control order. Desktops are recreated by count, so the ordinal is
     /// what identifies "the same desktop" across logins.

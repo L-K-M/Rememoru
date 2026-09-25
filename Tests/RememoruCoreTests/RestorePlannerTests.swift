@@ -175,18 +175,79 @@ final class RestorePlannerTests: XCTestCase {
         })
     }
 
-    func testAppsToLaunchAreThoseWithoutLiveWindows() {
+    func testAppsToLaunchAreThoseNotRunningAtAll() {
         var mail = saved(1, on: "a")
         mail.bundleID = "com.apple.mail"
         var notes = saved(2, on: "a")
         notes.bundleID = "com.apple.Notes"
         var notes2 = saved(3, on: "a")
         notes2.bundleID = "com.apple.Notes"
-        let snap = snapshot(spaces: [("a", .desktop)], windows: [mail, notes, notes2, saved(4, on: "a")])
-        var running = window(9, space: 1)
-        running.bundleID = "com.apple.mail"
-        XCTAssertEqual(RestorePlanner.appsToLaunch(snapshot: snap, live: live(desktops: 1, windows: [running])),
+        var preview = saved(5, on: "a")
+        preview.bundleID = "com.apple.Preview"
+        let snap = snapshot(spaces: [("a", .desktop)], windows: [mail, notes, notes2, preview, saved(4, on: "a")])
+        // Preview runs without windows: opening it again would only send a
+        // reopen event (an Open panel or a stray new window)
+        XCTAssertEqual(RestorePlanner.appsToLaunch(snapshot: snap, running: ["com.apple.mail", "com.apple.Preview"]),
                        ["com.apple.Notes": 2])
+    }
+
+    func testFullscreenOnAnotherDisplayIsLeftFirst() {
+        let snap = snapshot(spaces: [("d", .desktop), ("f", .fullscreen)], windows: [saved(1, on: "f")])
+        var state = live(desktops: 1, windows: [window(1, space: 70, frame: Rect(x: 1920, y: 0, w: 1280, h: 800))])
+        state.displays.append(LiveDisplay(id: 2, uuid: "E", frame: Rect(x: 1920, y: 0, w: 1280, h: 800), isMain: false))
+        state.spaces.append(LiveSpace(id: 70, key: "fsE", kind: .fullscreen, displayUUID: "E", index: 1, isActive: true))
+        let ref = WindowTarget(state.windows[0])
+        let steps = plan(snap, state).steps
+        XCTAssertEqual(Array(steps.prefix(2)), [
+            .exitFullscreen(ref),
+            .enterFullscreen(ref, display: "D", anchorOrdinal: 0),
+        ])
+    }
+
+    func testFullscreenSpaceUsesItsLargestWindow() {
+        // CGWindowList order puts an inspector panel floating over the
+        // fullscreen window first
+        let panel = saved(2, on: "f", frame: Rect(x: 1500, y: 100, w: 300, h: 500))
+        let main = saved(1, on: "f", frame: Rect(x: 0, y: 0, w: 1920, h: 1080))
+        let snap = snapshot(spaces: [("d", .desktop), ("f", .fullscreen)], active: "f", windows: [panel, main])
+        let state = live(desktops: 1, windows: [window(2, space: 1), window(1, space: 1)])
+        let steps = plan(snap, state).steps
+        XCTAssertTrue(steps.contains(.enterFullscreen(WindowTarget(state.windows[1]), display: "D", anchorOrdinal: 0)))
+        XCTAssertFalse(steps.contains { if case .enterFullscreen(let w, _, _) = $0 { return w.id == 2 }; return false })
+        XCTAssertEqual(steps.last, .focus(display: "D", .spaceOf(window: 1)))
+    }
+
+    func testDisplaysFallingBackToOneDisplayShareItsDesktopsAndOrder() {
+        // A (connected, 2 desktops saved) and GONE (3 desktops saved) both
+        // land on A, which has 1 desktop now
+        let a = DisplayRecord(uuid: "A", frame: screen, isMain: true,
+                              spaceUUIDs: ["a1", "a2", "af"], activeSpaceUUID: "a1")
+        let gone = DisplayRecord(uuid: "GONE", frame: screen, isMain: false,
+                                 spaceUUIDs: ["g1", "g2", "g3", "gf"], activeSpaceUUID: "g2")
+        let spaces = [("a1", "A", SpaceKind.desktop), ("a2", "A", .desktop), ("af", "A", .fullscreen),
+                      ("g1", "GONE", .desktop), ("g2", "GONE", .desktop), ("g3", "GONE", .desktop),
+                      ("gf", "GONE", .fullscreen)]
+        let snap = Snapshot(
+            created: "", displays: [a, gone],
+            spaces: spaces.enumerated().map {
+                SpaceRecord(uuid: $1.0, id: UInt64($0), kind: $1.2, displayUUID: $1.1, index: $0, isActive: false)
+            },
+            windows: []
+        )
+        let state = LiveState(
+            displays: [LiveDisplay(id: 1, uuid: "A", frame: screen, isMain: true)],
+            spaces: [LiveSpace(id: 1, key: "L0", kind: .desktop, displayUUID: "A", index: 0, isActive: true)],
+            windows: []
+        )
+        var options = RestoreOptions()
+        options.displayFallback = .mainDisplay
+        let steps = plan(snap, state, options: options).steps
+        XCTAssertEqual(steps.filter { if case .createDesktops = $0 { return true }; return false },
+                       [.createDesktops(display: "A", count: 2)], "enough for the larger layout, once")
+        XCTAssertEqual(steps.filter { if case .arrangeSpaces = $0 { return true }; return false },
+                       [.arrangeSpaces(snapshotDisplay: "A", display: "A")], "the display's own layout wins")
+        XCTAssertEqual(steps.filter { if case .focus = $0 { return true }; return false },
+                       [.focus(display: "A", .desktop(ordinal: 0))])
     }
 
     func testTranslateKeepsRelativePositionAndClampsToSmallerDisplays() {

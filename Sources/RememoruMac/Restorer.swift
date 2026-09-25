@@ -292,7 +292,7 @@ final class Restorer {
                 return .failed("the space reorder operation could not be submitted")
             }
             let placed = MissionControl.wait(timeout: 2) { () -> Bool? in
-                refresh(windows: false)
+                refresh()
                 return current().firstIndex(of: space) == index ? true : nil
             } != nil
             if !placed { return .failed("space \(space) did not move to position \(index + 1)") }
@@ -314,7 +314,7 @@ final class Restorer {
                     id = desktops[ordinal].id
                 }
             case .fullscreen, .splitView:
-                if let member = snapshot.windows.indices.first(where: { snapshot.windows[$0].spaceUUID == spaceUUID }),
+                if let member = snapshot.primaryWindowIndex(onSpace: spaceUUID),
                    let live = matches[member]?.live, let current = spaceOf(live.id),
                    current.kind.isFullscreenLike, current.displayUUID == uuid {
                     id = current.id
@@ -346,7 +346,8 @@ final class Restorer {
     /// Opens apps that have saved windows but none now, then waits until
     /// they show as many windows as were saved (or 20 s pass).
     private func launchMissingApps() {
-        let missing = RestorePlanner.appsToLaunch(snapshot: snapshot, live: state)
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let missing = RestorePlanner.appsToLaunch(snapshot: snapshot, running: running)
         guard !missing.isEmpty else { return }
         for bundleID in missing.keys.sorted() {
             guard mode == .apply else {
@@ -378,12 +379,11 @@ final class Restorer {
 
     // MARK: - Helpers
 
-    private func refresh(windows: Bool = true) {
-        if windows {
-            state = reader.read(withTitles: false)
-        } else {
-            state.spaces = SkyLight.managedSpaces().spaces
-        }
+    /// Re-reads spaces after a step. Window positions are not needed again
+    /// after planning (steps query WindowServer per window), and a full read
+    /// asks every app over AX, which costs seconds when one is hung.
+    private func refresh() {
+        state.spaces = SkyLight.managedSpaces().spaces
     }
 
     /// The space a window is on right now, straight from WindowServer.
@@ -538,10 +538,6 @@ final class Restorer {
         case .skipped(let reason): log("  – \(reason)")
         }
     }
-}
-
-extension SpaceKind {
-    var isFullscreenLike: Bool { self == .fullscreen || self == .splitView }
 }
 
 extension CGEvent {

@@ -104,11 +104,12 @@ public struct RestorePlan: Equatable, Sendable {
 }
 
 public enum RestorePlanner {
-    /// Bundle ids of apps with saved windows and no live window, with the
-    /// number of windows each had. Apps saved without a bundle id cannot
-    /// be launched reliably and are left out.
-    public static func appsToLaunch(snapshot: Snapshot, live: LiveState) -> [String: Int] {
-        let running = Set(live.windows.compactMap(\.bundleID))
+    /// Bundle ids of apps with saved windows that are not running, with the
+    /// number of windows each had. Running apps are left alone even when
+    /// they have no windows: opening them again only sends a reopen event,
+    /// which shows an Open panel or a new empty window. Apps saved without
+    /// a bundle id cannot be launched reliably and are left out.
+    public static func appsToLaunch(snapshot: Snapshot, running: Set<String>) -> [String: Int] {
         var result: [String: Int] = [:]
         for window in snapshot.windows {
             guard let bundleID = window.bundleID, !running.contains(bundleID) else { continue }
@@ -131,10 +132,27 @@ public enum RestorePlanner {
             notes.append("display \(display.uuid.prefix(8)) is not connected; its windows stay where they are")
         }
 
-        // 1. Desktops
+        // Several snapshot displays can land on one live display (fallback).
+        // Its own saved layout, else the first one mapped to it, decides
+        // space order and focus; desktops cover the largest of them.
+        var primary: [String: String] = [:]
+        var neededDesktops: [(display: String, count: Int)] = []
         for display in snapshot.displays {
             guard let liveUUID = displayMap[display.uuid]?.uuid else { continue }
-            let deficit = snapshot.desktopCount(onDisplay: display.uuid) - live.desktops(onDisplay: liveUUID).count
+            if display.uuid == liveUUID || primary[liveUUID] == nil {
+                primary[liveUUID] = display.uuid
+            }
+            let count = snapshot.desktopCount(onDisplay: display.uuid)
+            if let index = neededDesktops.firstIndex(where: { $0.display == liveUUID }) {
+                neededDesktops[index].count = max(neededDesktops[index].count, count)
+            } else {
+                neededDesktops.append((liveUUID, count))
+            }
+        }
+
+        // 1. Desktops
+        for (liveUUID, needed) in neededDesktops {
+            let deficit = needed - live.desktops(onDisplay: liveUUID).count
             guard deficit > 0 else { continue }
             if options.createDesktops {
                 steps.append(.createDesktops(display: liveUUID, count: deficit))
@@ -211,14 +229,16 @@ public enum RestorePlanner {
                         notes.append("fullscreen space \(space.uuid.prefix(8)) skipped (disabled)")
                         continue
                     }
-                    guard let member = members.first, let match = matches[member.offset] else {
+                    guard let member = snapshot.primaryWindowIndex(onSpace: space.uuid),
+                          let match = matches[member] else {
                         notes.append("fullscreen space \(space.uuid.prefix(8)): its window is gone")
                         continue
                     }
                     let current = live.space(id: match.live.spaceID)
                     if current?.kind == .fullscreen, current?.displayUUID == liveDisplay.uuid { continue }
                     let ref = WindowTarget(match.live)
-                    if current?.kind == .splitView { steps.append(.exitFullscreen(ref)) }
+                    // a Split View tile, or fullscreen on another display
+                    if current?.kind.isFullscreenLike == true { steps.append(.exitFullscreen(ref)) }
                     if match.live.isMinimized { steps.append(.setMinimized(ref, false)) }
                     steps.append(.enterFullscreen(ref, display: liveDisplay.uuid, anchorOrdinal: entry.anchor))
                 case .splitView:
@@ -252,7 +272,7 @@ public enum RestorePlanner {
             }
             // desktops are interchangeable by ordinal, so order only matters
             // when fullscreen or Split View spaces sit between them
-            if options.arrangeSpaces, !anchored.isEmpty {
+            if options.arrangeSpaces, !anchored.isEmpty, primary[liveDisplay.uuid] == display.uuid {
                 steps.append(.arrangeSpaces(snapshotDisplay: display.uuid, display: liveDisplay.uuid))
             }
         }
@@ -260,7 +280,7 @@ public enum RestorePlanner {
         // 4. Active space per display
         if options.focus {
             for display in snapshot.displays {
-                guard let liveDisplay = displayMap[display.uuid],
+                guard let liveDisplay = displayMap[display.uuid], primary[liveDisplay.uuid] == display.uuid,
                       let active = snapshot.space(uuid: display.activeSpaceUUID) else { continue }
                 switch active.kind {
                 case .desktop:
@@ -268,8 +288,7 @@ public enum RestorePlanner {
                         steps.append(.focus(display: liveDisplay.uuid, .desktop(ordinal: ordinal)))
                     }
                 case .fullscreen, .splitView:
-                    let member = snapshot.windows.indices.first { snapshot.windows[$0].spaceUUID == active.uuid }
-                    if let member, let match = matches[member] {
+                    if let member = snapshot.primaryWindowIndex(onSpace: active.uuid), let match = matches[member] {
                         steps.append(.focus(display: liveDisplay.uuid, .spaceOf(window: match.live.id)))
                     }
                 case .other:

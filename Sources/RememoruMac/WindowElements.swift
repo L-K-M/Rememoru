@@ -15,11 +15,14 @@ final class WindowElements {
     static let maxElementID: UInt64 = 0x7fff
 
     private var cache: [UInt32: AXElement] = [:]
-    private var probedPIDs: Set<pid_t> = []
+    /// Where the next probe of an app resumes. A probe stops once it found
+    /// what it was asked for, so a later lookup for another window of the
+    /// same app continues the scan instead of skipping it.
+    private var nextElementID: [pid_t: UInt64] = [:]
 
     func invalidate() {
         cache.removeAll()
-        probedPIDs.removeAll()
+        nextElementID.removeAll()
     }
 
     /// Windows of an app from `kAXWindows`, keyed by window id.
@@ -51,8 +54,8 @@ final class WindowElements {
     }
 
     private func probe(pid: pid_t, wanting: Set<UInt32>) {
-        guard !probedPIDs.contains(pid), let create = HIServicesPrivate.createWithRemoteToken else { return }
-        probedPIDs.insert(pid)
+        let start = nextElementID[pid] ?? 0
+        guard start < Self.maxElementID, let create = HIServicesPrivate.createWithRemoteToken else { return }
         var remaining = wanting
         let deadline = Date().addingTimeInterval(Self.probeBudget)
         var token = Data(count: 20)
@@ -61,8 +64,11 @@ final class WindowElements {
             raw.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
             raw.storeBytes(of: Int32(0x636f_636f), toByteOffset: 8, as: Int32.self)
         }
-        for elementID in 0..<Self.maxElementID {
+        var elementID = start
+        defer { nextElementID[pid] = elementID }
+        while elementID < Self.maxElementID {
             if remaining.isEmpty || Date() > deadline { break }
+            defer { elementID += 1 }
             token.withUnsafeMutableBytes { raw in
                 raw.storeBytes(of: elementID, toByteOffset: 12, as: UInt64.self)
             }

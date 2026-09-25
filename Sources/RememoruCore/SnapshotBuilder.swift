@@ -83,4 +83,8 @@ extension SpaceKind {
         if case .other = self { return false }
         return true
     }
+
+    public var isFullscreenLike: Bool {
+        self == .fullscreen || self == .splitView
+    }
 }

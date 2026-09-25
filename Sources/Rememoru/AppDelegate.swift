@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var cancellation: CancellationFlag?
     private var status: String?
     private var lastResult: String?
+    /// True while a capture runs; it can take seconds (one AX round trip
+    /// per app, more for windows on other Spaces), so it runs on `queue`.
+    private var saving = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -40,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let running = cancellation != nil
+        let running = cancellation != nil || saving
         let snapshots = service?.store.list() ?? []
 
         let save = item("Save Current Layout", #selector(saveLayout), key: "s")
@@ -65,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         restoreSubmenu.submenu = restoreMenu
         menu.addItem(restoreSubmenu)
 
-        if running {
+        if cancellation != nil {
             menu.addItem(.separator())
             menu.addItem(disabled(status ?? "Restoring…"))
             menu.addItem(item("Cancel Restore", #selector(cancelRestore)))
@@ -130,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        return formatter.string(from: entry.modified)
+        return formatter.string(from: entry.date)
     }
 
     // MARK: - Actions
@@ -145,13 +148,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                   buttons: ["OK"])
             return
         }
-        let snapshot = service.captureSnapshot()
-        do {
-            let url = try service.store.save(snapshot)
-            service.logFile.write("saved \(snapshot.windows.count) window(s) to \(url.lastPathComponent)")
-            lastResult = "Saved \(snapshot.windows.count) windows on \(snapshot.spaces.count) spaces"
-        } catch {
-            alert("Could not save the layout", error.localizedDescription, buttons: ["OK"])
+        guard !saving, cancellation == nil else { return }
+        saving = true
+        lastResult = "Saving…"
+        queue.async { [weak self] in
+            let snapshot = service.captureSnapshot()
+            let saved = Result { try service.store.save(snapshot) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.saving = false
+                switch saved {
+                case .success(let url):
+                    service.logFile.write("saved \(snapshot.windows.count) window(s) to \(url.lastPathComponent)")
+                    self.lastResult = "Saved \(snapshot.windows.count) windows on \(snapshot.spaces.count) spaces"
+                case .failure(let error):
+                    self.lastResult = nil
+                    self.alert("Could not save the layout", error.localizedDescription, buttons: ["OK"])
+                }
+            }
         }
     }
 
