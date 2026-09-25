@@ -11,21 +11,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Offline tests
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+  core:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.12'
-
       - name: Build and test
-        run: scripts/build.sh --clean
+        run: |
+          swift --version
+          scripts/build.sh --clean
+
+  app:
+    name: App (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build, test and bundle
+        run: |
+          swift --version
+          scripts/build.sh --clean
+
+      # Runners have a WindowServer session but no Accessibility grant, so
+      # this exercises the read-only paths against a real macOS and prints
+      # which private APIs resolve there. doctor exits 1 without
+      # Accessibility; anything else (a crash) fails the job.
+      - name: Smoke-test the app binary
+        run: |
+          app=dist/Rememoru.app/Contents/MacOS/Rememoru
+          "$app" version
+          "$app" doctor || [ $? -eq 1 ]
+          "$app" list
+          "$app" snapshot -o "$RUNNER_TEMP/layout.json"
+          "$app" restore "$RUNNER_TEMP/layout.json" --dry-run
+          "$app" dump > "$RUNNER_TEMP/dump.json"
+          python3 -m json.tool "$RUNNER_TEMP/dump.json" > /dev/null

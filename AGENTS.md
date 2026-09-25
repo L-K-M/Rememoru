@@ -1,61 +1,83 @@
 # Rememoru — agent brief
 
-macOS utility: snapshot the full window/Spaces layout to JSON, restore it
-later (windows that still exist). SIP stays enabled — all mutations go
-through Accessibility APIs and Mission Control UI automation, plus the
-private bridged WindowServer move op.
+macOS menu bar app (Swift, SwiftPM, no Xcode project): snapshot the full
+window/Spaces layout to JSON, restore it later (windows that still
+exist). SIP stays enabled: mutations go through Accessibility, SkyLight's
+bridged window-management operations, synthetic Dock-swipe gestures and
+Mission Control's accessibility tree.
 
 ## Layout
 
-- `rememoru/cf.py` — CoreFoundation via ctypes + `LazySym` (lazy symbol
-  binding; every framework loads on first call, never at import — keep it
-  that way so `doctor`/`--help` work off-macOS)
-- `rememoru/cg.py` — CoreGraphics: window list, display geometry, synthetic
-  mouse/key events
-- `rememoru/macho.py` — walks a loaded image's local symtab (dyld APIs) to
-  find non-exported symbols
-- `rememoru/objcrt.py` — objc runtime bridge for the bridged op +
-  NSRunningApplication (wrap lookups in `autorelease_pool`/`drain_pool`)
-- `rememoru/skylight.py` — private SkyLight bindings, space enumeration,
-  the bridged move (`SLSBridgedMoveWindowsToManagedSpaceOperation`,
-  Hammerspoon PR #3889 technique)
-- `rememoru/ax.py` — Accessibility helpers (frames, fullscreen, menus,
-  element-at-point)
-- `rememoru/mc.py` — Mission Control UI automation: create spaces,
-  thumbnail drags for reorder/moves, the Split View green-button flow
-- `rememoru/model.py` — snapshot capture + window matching helpers
-- `rememoru/restore.py` — phased restore orchestration
-- `rememoru/cli.py` — argparse CLI (`doctor`/`list`/`snapshot`/`restore`/
-  `inspect-mc`/`dump`); entry points: `./rememoru-cli` and
-  `python3 -m rememoru`
+- `Sources/RememoruCore/` (Foundation only, builds and tests on Linux):
+  snapshot format (`Snapshot`, JSON keys compatible with the old Python
+  files), SkyLight space parsing (`SpaceParser`), CGWindowList filtering,
+  window matching (`WindowMatcher`), restore planning (`RestorePlanner`,
+  pure: snapshot + live state -> ordered `RestoreStep`s), snapshot store,
+  log file, CLI parsing, `RestoreReport`
+- `Sources/RememoruMac/` (`#if os(macOS)`): `SkyLight` (reads),
+  `BridgedOperations` (window and space moves via
+  `performWithWMBridgeDelegate`), `Displays`, `AXElement` /
+  `WindowElements` (AX windows by CGWindowID, remote-token lookup for
+  other Spaces), `LiveReader`, `MissionControl`, `SpaceSwitcher`,
+  `Restorer` (executes and verifies each step), `Permissions`, `Session`,
+  `LayoutService` (the API the app uses)
+- `Sources/Rememoru/`: menu bar app (`AppDelegate`, `Preferences`,
+  `LoginItem` via `SMAppService`) and command-line mode (`CommandRunner`,
+  runs when the first argument is a command)
+- `scripts/build-app.sh`: assembles and signs `dist/Rememoru.app`
+
+Private symbols are resolved with `dlopen`/`dlsym` (`NativeLibrary`),
+never linked, so a symbol missing on some macOS disables one feature
+instead of aborting launch. Keep it that way.
 
 ## Test / verify
 
 ```sh
-python3 -m compileall rememoru rememoru-cli
-python3 -m unittest discover -s tests
-./rememoru-cli doctor          # on a Mac: permissions + binding health
+swift build && swift test        # anywhere; Core logic + fixtures
+scripts/build.sh                 # plus the app bundle on macOS
+dist/Rememoru.app/Contents/MacOS/Rememoru doctor   # on a Mac
 ```
 
-The offline tests mock the native layer (cg/skylight/ax) — keep new logic
-testable that way where possible. macOS-only paths need a real Mac;
-`./rememoru-cli dump` prints raw SkyLight dicts for diagnosis.
+Keep decision logic in `RememoruCore` so it stays testable without a
+Mac; `RememoruMac` should only read state and perform steps. CI's macOS
+job smoke-tests `doctor`/`list`/`snapshot`/`restore --dry-run`/`dump`
+on a real macOS runner (no Accessibility there). Mutating paths need a
+real Mac; `Rememoru dump` prints raw SkyLight data for diagnosis.
 
-## macOS 26 (Tahoe) findings — don't regress these
+## macOS findings — don't regress these
 
-- `CGDisplayCreateUUIDFromDisplayID` is gone → display UUIDs come from
-  SkyLight `Display Identifier`, joined to CG displays by enumeration
-  order (`model.display_list`)
+- `SLSCopySpacesForWindows` with several windows returns the **union** of
+  their spaces, not one entry per window: query one window per call
+- `CGDisplayCreateUUIDFromDisplayID` lives in **ColorSync** on current
+  macOS (looking only in CoreGraphics made it look "gone" on 26). It
+  yields SkyLight's `Display Identifier`; enumeration order is only the
+  fallback
 - Split View spaces report `type: 4` (same as plain fullscreen). Real
   signal: `TileLayoutManager.TileSpaces` has **≥2 entries** for a pair,
   1 for a solo fullscreen. `type 5` now means a tile *sub*-space.
 - Windows on fullscreen/tiled spaces report the **tile sub-space id** to
   `SLSCopySpacesForWindows`, not the outer space id → translate via
-  `Connection.tile_parents` (populated by `spaces()`)
+  `ManagedSpaces.tileParents`
 - `TileRect.X <= Layout Rect.X` → tile is on the left
 - Type `6` = `WallSpace` (wallpaper backing) — never a restore target
 - Fullscreen/tiled space dicts also carry `pid` (int or list) and
   `fs_wid`/`TileWindowID` (CG window ids)
+- The original desktop's `uuid` can be empty: spaces are keyed by uuid
+  if unique, else `id:<ManagedSpaceID>`
+- Moving other apps' windows between Spaces: only
+  `SLSBridgedMoveWindowsToManagedSpaceOperation` works with SIP on
+  (macOS 26.4+; `SLSMoveWindowsToManagedSpace` is a no-op since 14.5).
+  It is asynchronous; confirm by polling. Dispatch with
+  `performWithWMBridgeDelegate` (no argument, void for async ops)
+- `kAXWindows` omits windows on other Spaces (minimized ones are
+  included); `_AXUIElementCreateWithRemoteToken` reaches them. Titles
+  via AX need only Accessibility; `kCGWindowName` needs Screen Recording
+- Plain `SLSManagedDisplaySetCurrentSpace` desyncs the Dock; switch
+  Spaces with the Dock-swipe gesture or Mission Control instead
+- Login-app history: an osacompile'd AppleScript applet showed an
+  uncaught "AppleEvent timed out (-1712)" because its `display dialog`
+  calls time out when the applet isn't frontmost; `with timeout` never
+  applied to `do shell script`. The native app replaced it
 
 <!-- shared-rules:start -->
 

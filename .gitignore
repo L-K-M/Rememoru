@@ -1,5 +1,6 @@
-__pycache__/
-*.pyc
-rememoru-*.json
-rememoru-snapshot.json
+.build/
+.swiftpm/
 dist/
+*.xcodeproj/
+rememoru-*.json
+layout-*.json

@@ -3,153 +3,157 @@
 > [!IMPORTANT]
 > LLM disclosure: This codebase was written with substantial help from large language models: AI coding agents working from the [`AGENTS.md`](AGENTS.md) brief in this repo.
 
-Snapshot and restore your macOS window layout — displays, Spaces, fullscreen
-windows, Split View pairs, and space order — **with SIP fully enabled**.
+A macOS menu bar app that saves your window layout and puts it back later:
+which display and desktop (Space) every window is on, its position and
+size, fullscreen windows, Split View pairs, and the order of your Spaces.
+It works **with SIP enabled**.
 
-Zero dependencies: pure Python 3 + `ctypes` against the system frameworks.
-No installation, no yabai, no scripting additions, no SIP changes.
+## Install
 
-```sh
-./rememoru-cli doctor      # check your setup first
-./rememoru-cli list        # show the current display/space/window map
-./rememoru-cli snapshot    # capture → rememoru-<timestamp>.json
-./rememoru-cli restore rememoru-<timestamp>.json --dry-run --verbose
-./rememoru-cli restore rememoru-<timestamp>.json
-```
-
-## Requirements
-
-- macOS (developed against macOS 26 / Tahoe; private API surface should work
-  on 15+ — older versions untested)
-- "Displays have separate Spaces" **enabled** (System Settings →
-  Desktop & Dock)
-- Grant to the app that runs the tool (Terminal, iTerm, …):
-  - **Accessibility** — required for restore
-  - **Screen Recording** — needed for window titles; without it matching is
-    weaker and Mission Control drag fallbacks may pick the wrong window
-- Stage Manager: not supported
-
-## What gets captured
-
-- Every display: stable UUID, frame, main flag, ordered space list, active space
-- Every space: UUID/id, type (user desktop / fullscreen / split-view),
-  Mission Control order
-- Every window: id, pid, app, bundle id, title, frame, space assignment,
-  split-view side
-
-## What restore does
-
-Runs a phased restore, skipping whatever is no longer available:
-
-1. Match saved windows to live windows (app + bundle id + fuzzy title)
-2. Create missing desktops via Mission Control (`+` button)
-3. Move windows onto their target spaces — the private
-   `SLSBridgedMoveWindowsToManagedSpaceOperation` WindowServer op
-   (SIP-safe; technique from Hammerspoon PR #3889), with optional
-   Mission Control drag and relaunch fallbacks
-4. Restore window frames via Accessibility
-5. Recreate fullscreen spaces via `AXFullScreen`
-6. Recreate Split View pairs — green-button hold → "Tile Window to Left/Right
-   of Screen" → clicks the companion thumbnail in the picker
-7. Reorder spaces via Mission Control thumbnail drags
-8. Restore the active space per display
-
-## Restore options
-
-```text
---dry-run           print the plan, change nothing (no AX permission needed)
---verbose           per-window progress
---launch            launch apps whose windows are all missing
---relaunch          allow quit+reopen as a window-move fallback
-                    (may lose unsaved app state)
---move-fallback {none,mc,relaunch,all}
-                    what to try if the bridged space-move fails
-                    (default: mc = Mission Control drag)
---no-fullscreen     don't recreate fullscreen spaces
---no-split          don't recreate Split View pairs
---no-reorder        don't reorder space thumbnails
---remap-displays    map snapshot windows of missing displays onto connected ones
---focus-mode {sls,mc}
-                    space switching: fast SkyLight call (default) or
-                    Mission Control thumbnail click
-```
-
-## Restore automatically at login
-
-Two options. Both wait 60 seconds after login — so login apps can finish
-opening their windows — then run `restore --launch --verbose`, logging to
-`/tmp/rememoru-restore.log`.
-
-**Option A — AppleScript Login Item (recommended).** A real `.app` gets
-its own Accessibility/Screen Recording grant, so you don't hand AX to
-`python3` globally:
+Rememoru is built from source (it uses private macOS APIs, so it is not
+notarized or in the App Store). You need the Xcode command-line tools
+(`xcode-select --install`) on macOS 13 or later.
 
 ```sh
-contrib/install-login-app.sh   # interactive setup → ~/Applications/RememoruRestore.app
+scripts/build-app.sh --install   # builds dist/Rememoru.app, copies it to ~/Applications
+open ~/Applications/Rememoru.app
 ```
 
-The installer asks for the `rememoru-cli` path, the snapshot file to
-restore (defaults to the newest `rememoru-*.json` it finds, and offers to
-capture one if none exists), and the post-login delay — then compiles the
-app and can add it to Login Items for you.
+On first launch Rememoru asks for **Accessibility** permission. Turn
+Rememoru on under System Settings > Privacy & Security > Accessibility.
 
-On first run the app checks its own Accessibility grant; if missing it
-opens the Accessibility settings pane and waits — toggle
-"RememoruRestore" on and click Retry (macOS only shows its own grant
-prompt once, so the app drives this itself). Non-interactive installer
-use: `REMEMORU_CLI=… REMEMORU_SNAPSHOT=… REMEMORU_DELAY=…
-REMEMORU_NONINTERACTIVE=1 contrib/install-login-app.sh`.
+> [!NOTE]
+> macOS ties the permission to the app's code signature. The default
+> build is signed ad hoc, and that signature changes with every rebuild,
+> so after rebuilding you have to grant the permission again: remove the
+> old Rememoru entry with the minus button and add the new one. To keep
+> the grant across builds, sign with a stable identity, for example
+> `CODESIGN_IDENTITY="Apple Development: you@example.com" scripts/build-app.sh --install`
+> (list yours with `security find-identity -v -p codesigning`).
 
-**Option B — LaunchAgent** (`contrib/com.rememoru.restore.plist`), for a
-headless setup without an app bundle:
+## Use
+
+Click the menu bar icon:
+
+- **Save Current Layout** (⌘S) writes a snapshot to
+  `~/Library/Application Support/Rememoru/Snapshots/`.
+- **Restore Latest Layout** (⌘R), or pick an older one under **Restore**.
+  Rememoru reports what it could not restore, with a link to the log.
+- **Restore Latest Layout at Login** registers Rememoru as a login item.
+  At login it waits (**Wait After Login**, 30 s by default) so your apps
+  can reopen their windows, then restores the newest snapshot.
+- **Open Apps That Aren't Running** (on by default) launches apps that
+  had saved windows before matching, and waits up to 20 s for their
+  windows.
+- **Show Log** opens `~/Library/Logs/Rememoru/rememoru.log`, which lists
+  every step of every restore and whether it worked.
+
+**Screen Recording** permission is optional. Rememoru reads window titles
+through Accessibility. With Screen Recording it can also read the titles
+of windows on other Spaces cheaply, which helps tell windows of the same
+app apart.
+
+### Requirements and settings
+
+- macOS 26 (Tahoe) is the target. Moving windows between Spaces needs
+  macOS 26.4 or later. Everything else also runs on 13 to 15, but is
+  untested there.
+- System Settings > Desktop & Dock > "Displays have separate Spaces" must
+  be **on**.
+- Stage Manager is not supported.
+
+## What a restore does
+
+Rememoru first matches saved windows to the windows open now. A window
+from the same login session matches by its WindowServer ID. After a
+restart, windows match by app and title. If a title changed (a browser
+now shows a different tab), the window matches by position among that
+app's remaining windows. Then Rememoru plans the steps and runs them,
+checking each one against WindowServer before counting it as done:
+
+1. **Create missing desktops**: presses "+" in Mission Control, through
+   the Dock's accessibility tree.
+2. **Unminimize or minimize** windows as saved.
+3. **Leave fullscreen** for windows that were on a normal desktop.
+4. **Move windows to their desktop**: uses SkyLight's
+   `SLSBridgedMoveWindowsToManagedSpaceOperation`, which the WindowServer
+   runs for Rememoru, so it works with SIP on (the same approach as yabai
+   7.1.25 and Loop). Desktops are matched by position: desktop 2 is the
+   second desktop on that display.
+5. **Set positions and sizes** through Accessibility. For a window on a
+   hidden Space, Rememoru switches to that Space if setting it directly
+   doesn't stick.
+6. **Recreate fullscreen windows** (`AXFullScreen`) and **Split View
+   pairs** (Window > Full Screen Tile > Left of Screen, then a click on
+   the partner window in the picker). Each window starts from the desktop
+   its space followed, so the new space lands in the right place.
+7. **Restore the order of Spaces** where fullscreen or Split View spaces
+   sit between desktops (`SLSBridgedMoveManagedSpaceToDisplayIndexOperation`).
+8. **Show the Space that was active** on each display, with the same
+   synthetic Dock-swipe gesture yabai uses. Mission Control is the
+   fallback.
+
+Your pointer returns to where it was when the restore finishes. You can
+cancel a running restore from the menu.
+
+## Command line
+
+The app binary doubles as a command-line tool. It is handy for
+diagnosing problems and for scripting:
 
 ```sh
-cp contrib/com.rememoru.restore.plist ~/Library/LaunchAgents/
-# edit the two paths inside: checkout dir + snapshot file
-launchctl bootstrap gui/$(id -u) \
-    ~/Library/LaunchAgents/com.rememoru.restore.plist
-
-# test without logging out / uninstall:
-launchctl kickstart gui/$(id -u)/com.rememoru.restore
-launchctl bootout gui/$(id -u)/com.rememoru.restore
+R=~/Applications/Rememoru.app/Contents/MacOS/Rememoru
+$R doctor                     # permissions and private API availability
+$R list                       # displays, spaces and windows right now
+$R snapshot [-o file.json]    # save (default: the app's snapshot folder)
+$R restore [file.json] --dry-run   # print the plan without changing anything
+$R restore [file.json]        # --no-fullscreen --no-split --no-arrange ...
+$R dump > dump.json           # raw WindowServer data for bug reports
+$R inspect-mc                 # Mission Control's accessibility tree
 ```
 
-Note: under launchd the Accessibility grant attaches to `python3` itself
-rather than your terminal — if the log says Accessibility is missing, add
-`/usr/bin/python3` under System Settings → Privacy & Security →
-Accessibility.
+When run from a terminal, the command uses the terminal's permissions,
+not Rememoru.app's.
 
-## Debugging
+## Limitations
 
-```sh
-./rememoru-cli dump        # raw SkyLight display/space dicts, CG displays,
-                           # and raw per-window space-query results
-./rememoru-cli inspect-mc  # dump Dock/Mission Control AX tree
-```
+- **Private APIs.** SkyLight and a few HIServices functions are
+  undocumented. Rememoru looks each one up at runtime, and `doctor` shows
+  which are missing. A missing function disables its feature instead of
+  crashing the app. Reports say macOS 27 moves Mission Control's
+  accessibility tree and ignores the synthetic swipe, so expect breakage
+  there.
+- **Split View** depends on the app having a standard Window menu with
+  English titles, and on the picker offering the partner window. The
+  width ratio of the pair is not restored.
+- **Moving a window into a Space that has never been shown** can fail on
+  some systems (yabai #2789). Rememoru then shows that Space and tries
+  again.
+- **Windows of apps that are not running** can't be restored. Rememoru
+  reports them and skips them.
+- **Windows assigned to all desktops** are not captured.
 
-## Honest limitations
+## Upgrading from the Python version
 
-- **Split View is UI-automation fragile** — no programmatic API exists; the
-  menu titles are localized and the picker needs timing. If the automation
-  can't find the companion thumbnail it leaves the picker open so you can
-  click it yourself.
-- Space reordering is simulated thumbnail drags — works, but slower and less
-  precise than yabai's SIP-off path.
-- Windows owned by apps that are no longer running are skipped (or relaunched
-  with `--launch`); fuzzy title matching can't resurrect e.g. a closed browser
-  tab's window.
-- Minimized windows aren't in `CGWindowList` and aren't captured.
-- Uses private SkyLight APIs — fine for personal tooling, not App Store-safe.
+The earlier Python and AppleScript tooling is gone. Snapshots it wrote
+still load: copy them into the snapshots folder (**Open Snapshots
+Folder**) or pass them to `restore`. Remove the old login helpers:
+delete `~/Applications/RememoruRestore.app` and remove it from System
+Settings > General > Login Items. If you installed the LaunchAgent, run
+`launchctl bootout gui/$(id -u)/com.rememoru.restore` and delete
+`~/Library/LaunchAgents/com.rememoru.restore.plist`.
 
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests   # offline tests (mock native layer)
-python3 -m compileall rememoru          # syntax check
+swift build && swift test   # core logic; builds and tests on Linux too
+scripts/build.sh            # the same, plus the app bundle on macOS
 ```
 
-The code is split by framework: `cf`/`cg`/`skylight`/`ax` are thin ctypes
-layers, `macho`/`objcrt` support the bridged move op, `mc` is Mission Control
-automation, `model` captures snapshots, `restore` orchestrates, `cli` wires it
-up. All native symbols are lazy-loaded so the CLI degrades cleanly instead of
-crashing at import.
+`RememoruCore` holds everything that can be tested without a Mac:
+snapshot format, SkyLight space parsing, window matching, restore
+planning, the snapshot store and command-line parsing. `RememoruMac`
+wraps the system: SkyLight, CoreGraphics, Accessibility and Mission
+Control. The `Rememoru` target is the menu bar app and command-line entry
+point. See [`AGENTS.md`](AGENTS.md) for the macOS findings the code
+depends on.
