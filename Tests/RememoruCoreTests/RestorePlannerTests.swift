@@ -63,7 +63,7 @@ final class RestorePlannerTests: XCTestCase {
                             windows: [saved(1, on: "c", frame: target)])
         let state = live(desktops: 1, windows: [window(1, space: 1)])
         let steps = plan(snap, state).steps
-        let ref = WindowRef(state.windows[0])
+        let ref = WindowTarget(state.windows[0])
         XCTAssertEqual(Array(steps.prefix(3)), [
             .createDesktops(display: "D", count: 2),
             .setFrame(ref, target),
@@ -76,8 +76,8 @@ final class RestorePlannerTests: XCTestCase {
         let fs = LiveSpace(id: 50, key: "fs", kind: .fullscreen, displayUUID: "D", index: 1, isActive: false)
         let state = live(desktops: 1, extra: [fs], windows: [window(1, space: 50, frame: screen)])
         let steps = plan(snap, state).steps
-        XCTAssertEqual(steps.first, .exitFullscreen(WindowRef(state.windows[0])))
-        XCTAssertTrue(steps.contains(.moveToDesktop(WindowRef(state.windows[0]), display: "D", ordinal: 0)))
+        XCTAssertEqual(steps.first, .exitFullscreen(WindowTarget(state.windows[0])))
+        XCTAssertTrue(steps.contains(.moveToDesktop(WindowTarget(state.windows[0]), display: "D", ordinal: 0)))
     }
 
     func testFullscreenSpacesAnchoredToTheSameDesktopAreCreatedLastFirst() {
@@ -94,7 +94,7 @@ final class RestorePlannerTests: XCTestCase {
             if case .arrangeSpaces = $0 { return true }
             return false
         }
-        let refs = state.windows.map(WindowRef.init)
+        let refs = state.windows.map(WindowTarget.init)
         XCTAssertEqual(steps, [
             .enterFullscreen(refs[0], display: "D", anchorOrdinal: 0),
             .enterFullscreen(refs[3], display: "D", anchorOrdinal: 1),
@@ -152,8 +152,8 @@ final class RestorePlannerTests: XCTestCase {
         let snap = snapshot(spaces: [("a", .desktop)], windows: [minimized, saved(2, on: "a")])
         let state = live(desktops: 1, windows: [window(1, space: 1), window(2, space: nil, minimized: true)])
         let steps = plan(snap, state, options: { var o = RestoreOptions(); o.focus = false; return o }()).steps
-        XCTAssertEqual(steps.first, .setMinimized(WindowRef(state.windows[0]), true))
-        XCTAssertTrue(steps.contains(.setMinimized(WindowRef(state.windows[1]), false)))
+        XCTAssertEqual(steps.first, .setMinimized(WindowTarget(state.windows[0]), true))
+        XCTAssertTrue(steps.contains(.setMinimized(WindowTarget(state.windows[1]), false)))
     }
 
     func testDisconnectedDisplayIsSkippedUnlessFallbackRequested() {

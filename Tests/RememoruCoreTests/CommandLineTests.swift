@@ -38,7 +38,7 @@ final class CommandLineTests: XCTestCase {
 
     func testReportSummary() {
         var report = RestoreReport()
-        let ref = WindowRef(LiveWindow(id: 1, pid: 1, appName: "A", title: "", frame: Rect(x: 0, y: 0, w: 1, h: 1),
+        let ref = WindowTarget(LiveWindow(id: 1, pid: 1, appName: "A", title: "", frame: Rect(x: 0, y: 0, w: 1, h: 1),
                                        isOnscreen: true))
         report.entries = [.init(step: .exitFullscreen(ref), outcome: .done),
                           .init(step: .exitFullscreen(ref), outcome: .failed("no"))]

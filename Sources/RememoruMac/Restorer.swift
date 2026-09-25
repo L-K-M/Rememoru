@@ -68,7 +68,7 @@ final class Restorer {
         // focus steps switch spaces, so they run last, after the deferred
         // frames have had their spaces shown
         let focusSteps = plan.steps.filter { if case .focus = $0 { return true } else { return false } }
-        var deferredFrames: [(entry: Int, window: WindowRef, frame: Rect)] = []
+        var deferredFrames: [(entry: Int, window: WindowTarget, frame: Rect)] = []
 
         for (number, step) in plan.steps.enumerated() {
             if case .focus = step { continue }
@@ -149,7 +149,7 @@ final class Restorer {
         return added == count ? .done : .failed("added \(added) of \(count) desktop(s)")
     }
 
-    private func setMinimized(_ window: WindowRef, _ minimized: Bool) -> RestoreReport.Outcome {
+    private func setMinimized(_ window: WindowTarget, _ minimized: Bool) -> RestoreReport.Outcome {
         guard let element = element(of: window) else { return .failed("no accessibility element for the window") }
         element.setBool(kAXMinimizedAttribute, minimized)
         let confirmed = MissionControl.wait(timeout: 2) {
@@ -159,7 +159,7 @@ final class Restorer {
         return confirmed ? .done : .failed("the app did not \(minimized ? "minimize" : "unminimize") it")
     }
 
-    private func exitFullscreen(_ window: WindowRef) -> RestoreReport.Outcome {
+    private func exitFullscreen(_ window: WindowTarget) -> RestoreReport.Outcome {
         // fullscreen spaces only react while shown
         guard let element = visibleElement(of: window) else {
             return .failed("no accessibility element for the window")
@@ -174,7 +174,7 @@ final class Restorer {
     /// Sets a frame without switching Spaces. `.skipped` means the window is
     /// on a hidden Space and the frame did not take; the caller retries it
     /// with the Space shown.
-    private func setFrameDirectly(_ window: WindowRef, _ frame: Rect) -> RestoreReport.Outcome {
+    private func setFrameDirectly(_ window: WindowTarget, _ frame: Rect) -> RestoreReport.Outcome {
         let onVisibleSpace = spaceOf(window.id)?.isActive ?? true
         guard let element = element(of: window) else {
             return onVisibleSpace ? .failed("no accessibility element for the window") : .skipped("hidden")
@@ -184,20 +184,20 @@ final class Restorer {
         return onVisibleSpace ? .failed(frameMismatch(window.id, frame)) : .skipped("hidden")
     }
 
-    private func setFrameShowingSpace(_ window: WindowRef, _ frame: Rect) -> RestoreReport.Outcome {
+    private func setFrameShowingSpace(_ window: WindowTarget, _ frame: Rect) -> RestoreReport.Outcome {
         guard let element = visibleElement(of: window) else { return .failed("could not show the window's Space") }
         element.setFrame(frame)
         return frameMatches(window.id, frame) ? .done : .failed(frameMismatch(window.id, frame))
     }
 
-    private func moveToDesktop(_ window: WindowRef, display: String, ordinal: Int) -> RestoreReport.Outcome {
+    private func moveToDesktop(_ window: WindowTarget, display: String, ordinal: Int) -> RestoreReport.Outcome {
         refresh()
         let desktops = state.desktops(onDisplay: display)
         guard ordinal < desktops.count else { return .failed("display has no desktop \(ordinal + 1)") }
         return move(window, to: desktops[ordinal], display: display)
     }
 
-    private func move(_ window: WindowRef, to target: LiveSpace, display: String) -> RestoreReport.Outcome {
+    private func move(_ window: WindowTarget, to target: LiveSpace, display: String) -> RestoreReport.Outcome {
         if spaceOf(window.id)?.id == target.id { return .done }
         guard BridgedOperations.canMoveWindows else {
             return .failed("this macOS version has no usable SLSBridgedMoveWindowsToManagedSpaceOperation")
@@ -223,7 +223,7 @@ final class Restorer {
         return moved ? .done : .failed("WindowServer did not move the window")
     }
 
-    private func enterFullscreen(_ window: WindowRef, display: String, anchor: Int) -> RestoreReport.Outcome {
+    private func enterFullscreen(_ window: WindowTarget, display: String, anchor: Int) -> RestoreReport.Outcome {
         if let failure = placeOnAnchor([window], display: display, anchor: anchor) { return .failed(failure) }
         guard let element = visibleElement(of: window) else { return .failed("no accessibility element for the window") }
         raise(window, element)
@@ -240,7 +240,7 @@ final class Restorer {
         return entered ? .done : .failed("window did not enter fullscreen within 5 s")
     }
 
-    private func splitView(left: WindowRef, right: WindowRef, display: String, anchor: Int) -> RestoreReport.Outcome {
+    private func splitView(left: WindowTarget, right: WindowTarget, display: String, anchor: Int) -> RestoreReport.Outcome {
         if let failure = placeOnAnchor([left, right], display: display, anchor: anchor) { return .failed(failure) }
         guard let liveDisplay = state.display(uuid: display) else { return .failed("display is not connected") }
         guard let element = visibleElement(of: left) else { return .failed("no accessibility element for \(left)") }
@@ -393,12 +393,12 @@ final class Restorer {
         return managed.spaces.first { $0.id == id }
     }
 
-    private func element(of window: WindowRef) -> AXElement? {
+    private func element(of window: WindowTarget) -> AXElement? {
         reader.elements.element(for: window.id, pid: window.pid)
     }
 
     /// Shows the window's Space if needed, then returns its element.
-    private func visibleElement(of window: WindowRef) -> AXElement? {
+    private func visibleElement(of window: WindowTarget) -> AXElement? {
         if let space = spaceOf(window.id), !space.isActive, let display = state.display(uuid: space.displayUUID) {
             _ = SpaceSwitcher.show(spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces })
             reader.elements.invalidate()
@@ -409,7 +409,7 @@ final class Restorer {
     /// Gets windows onto the anchor desktop of a display (for fullscreen
     /// and Split View, which create their space next to it) and shows it.
     /// Returns a failure reason, or nil.
-    private func placeOnAnchor(_ windows: [WindowRef], display uuid: String, anchor: Int) -> String? {
+    private func placeOnAnchor(_ windows: [WindowTarget], display uuid: String, anchor: Int) -> String? {
         refresh()
         guard let display = state.display(uuid: uuid) else { return "display is not connected" }
         let desktops = state.desktops(onDisplay: uuid)
@@ -434,7 +434,7 @@ final class Restorer {
         return nil
     }
 
-    private func raise(_ window: WindowRef, _ element: AXElement) {
+    private func raise(_ window: WindowTarget, _ element: AXElement) {
         // activate() alone is only a request since macOS 14; AXFrontmost
         // makes the app key so menu commands target this window
         NSRunningApplication(processIdentifier: window.pid)?.activate(options: [])

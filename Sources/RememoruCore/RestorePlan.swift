@@ -1,7 +1,7 @@
 import Foundation
 
 /// A live window a restore step acts on.
-public struct WindowRef: Equatable, Sendable, CustomStringConvertible {
+public struct WindowTarget: Equatable, Sendable, CustomStringConvertible {
     public var id: UInt32
     public var pid: Int32
     public var appName: String
@@ -30,15 +30,15 @@ public enum SpaceTarget: Equatable, Sendable {
 
 public enum RestoreStep: Equatable, Sendable, CustomStringConvertible {
     case createDesktops(display: String, count: Int)
-    case setMinimized(WindowRef, Bool)
-    case exitFullscreen(WindowRef)
-    case setFrame(WindowRef, Rect)
-    case moveToDesktop(WindowRef, display: String, ordinal: Int)
+    case setMinimized(WindowTarget, Bool)
+    case exitFullscreen(WindowTarget)
+    case setFrame(WindowTarget, Rect)
+    case moveToDesktop(WindowTarget, display: String, ordinal: Int)
     /// Fullscreen the window from the given desktop. macOS inserts a new
     /// fullscreen space right after the space the window was on, so the
     /// anchor desktop decides where the space lands in Mission Control.
-    case enterFullscreen(WindowRef, display: String, anchorOrdinal: Int)
-    case splitView(left: WindowRef, right: WindowRef, display: String, anchorOrdinal: Int)
+    case enterFullscreen(WindowTarget, display: String, anchorOrdinal: Int)
+    case splitView(left: WindowTarget, right: WindowTarget, display: String, anchorOrdinal: Int)
     /// Put the display's spaces in the snapshot's Mission Control order,
     /// if they are not already.
     case arrangeSpaces(snapshotDisplay: String, display: String)
@@ -147,7 +147,7 @@ public enum RestorePlanner {
         for (index, saved) in snapshot.windows.enumerated() {
             guard let match = matches[index] else { continue }
             let window = match.live
-            let ref = WindowRef(window)
+            let ref = WindowTarget(window)
             guard let savedDisplay = saved.displayUUID,
                   let liveDisplay = displayMap[savedDisplay],
                   let snapDisplay = snapshot.displays.first(where: { $0.uuid == savedDisplay })
@@ -217,7 +217,7 @@ public enum RestorePlanner {
                     }
                     let current = live.space(id: match.live.spaceID)
                     if current?.kind == .fullscreen, current?.displayUUID == liveDisplay.uuid { continue }
-                    let ref = WindowRef(match.live)
+                    let ref = WindowTarget(match.live)
                     if current?.kind == .splitView { steps.append(.exitFullscreen(ref)) }
                     if match.live.isMinimized { steps.append(.setMinimized(ref, false)) }
                     steps.append(.enterFullscreen(ref, display: liveDisplay.uuid, anchorOrdinal: entry.anchor))
@@ -238,12 +238,12 @@ public enum RestorePlanner {
                     for window in [l.live, r.live] {
                         let kind = live.space(id: window.spaceID)?.kind
                         if kind == .fullscreen || kind == .splitView {
-                            steps.append(.exitFullscreen(WindowRef(window)))
+                            steps.append(.exitFullscreen(WindowTarget(window)))
                         }
-                        if window.isMinimized { steps.append(.setMinimized(WindowRef(window), false)) }
+                        if window.isMinimized { steps.append(.setMinimized(WindowTarget(window), false)) }
                     }
                     steps.append(.splitView(
-                        left: WindowRef(l.live), right: WindowRef(r.live),
+                        left: WindowTarget(l.live), right: WindowTarget(r.live),
                         display: liveDisplay.uuid, anchorOrdinal: entry.anchor
                     ))
                 case .desktop, .other:

@@ -112,7 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        item.target = action == #selector(NSApplication.terminate(_:)) ? NSApp : self
+        if action == #selector(NSApplication.terminate(_:)) {
+            item.target = NSApp
+        } else {
+            item.target = self
+        }
         return item
     }
 
