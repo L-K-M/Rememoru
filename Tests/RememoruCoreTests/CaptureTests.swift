@@ -155,7 +155,8 @@ final class SnapshotStoreTests: XCTestCase {
         let copied = dir.appendingPathComponent("rememoru-20200101-080000.json")
         try snapshot.encoded().write(to: copied)
 
-        XCTAssertEqual(store.latest?.url, saved)
-        XCTAssertEqual(store.list().map(\.url), [saved, copied])
+        // compare names: on macOS the temp dir is /var/..., listings say /private/var/...
+        XCTAssertEqual(store.latest?.url.lastPathComponent, saved.lastPathComponent)
+        XCTAssertEqual(store.list().map(\.url.lastPathComponent), [saved.lastPathComponent, copied.lastPathComponent])
     }
 }
