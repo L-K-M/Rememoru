@@ -42,10 +42,11 @@ Keep decision logic in `RememoruCore` so it stays testable without a
 Mac; `RememoruMac` should only read state and perform steps. CI's macOS
 job smoke-tests `doctor`/`list`/`snapshot`/`restore --dry-run`/`dump`
 on a real macOS runner, then runs `scripts/e2e-macos.sh` (the runner's
-shell has Accessibility): a frame restore and a move onto a newly
-created desktop, checked against WindowServer. Fullscreen, Split View
-and multi-display paths still need a real Mac; `Rememoru dump` prints
-raw SkyLight data for diagnosis.
+shell has Accessibility): a frame restore, a move onto a newly created
+desktop, a fullscreen space in saved order and a Split View pair, each
+checked against WindowServer. Multi-display paths, the menu bar UI and
+the login item still need a real Mac; `Rememoru dump` prints raw
+SkyLight data for diagnosis.
 
 ## macOS findings — don't regress these
 
