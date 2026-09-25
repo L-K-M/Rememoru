@@ -1,0 +1,117 @@
+[
+  {
+    "Display Identifier": "d26",
+    "Current Space": {
+      "ManagedSpaceID": 409,
+      "id64": 409,
+      "type": 4
+    },
+    "Spaces": [
+      {
+        "ManagedSpaceID": 39,
+        "id64": 39,
+        "uuid": "user-u",
+        "type": 0
+      },
+      {
+        "ManagedSpaceID": 65,
+        "id64": 65,
+        "uuid": "fs-u",
+        "type": 4,
+        "fs_wid": 569,
+        "pid": 602,
+        "TileLayoutManager": {
+          "Layout Rect": {
+            "X": 4872.0,
+            "Y": -76.0,
+            "Width": 1920.0,
+            "Height": 1080.0
+          },
+          "TileSpaces": [
+            {
+              "ManagedSpaceID": 67,
+              "id64": 67,
+              "uuid": "t67",
+              "TileWindowID": 569,
+              "fs_wid": 569,
+              "type": 5,
+              "TileType": "Primary",
+              "pid": 602,
+              "appName": "Slack",
+              "name": "Slack win",
+              "TileRect": {
+                "X": 4872.0,
+                "Y": -76.0,
+                "Width": 1920.0,
+                "Height": 1080.0
+              }
+            }
+          ]
+        }
+      },
+      {
+        "ManagedSpaceID": 409,
+        "id64": 409,
+        "uuid": "sv-u",
+        "type": 4,
+        "fs_wid": 2398,
+        "pid": [
+          597,
+          609
+        ],
+        "WallSpace": {
+          "ManagedSpaceID": 409,
+          "id64": 410,
+          "uuid": "w-u",
+          "type": 6
+        },
+        "TileLayoutManager": {
+          "Layout Rect": {
+            "X": 4872.0,
+            "Y": -76.0,
+            "Width": 1920.0,
+            "Height": 1080.0
+          },
+          "TileSpaces": [
+            {
+              "ManagedSpaceID": 411,
+              "id64": 411,
+              "uuid": "t411",
+              "TileWindowID": 599,
+              "fs_wid": 599,
+              "type": 5,
+              "TileType": "Primary",
+              "pid": 597,
+              "appName": "WhatsApp",
+              "name": "WhatsApp",
+              "TileRect": {
+                "X": 4872.0,
+                "Y": -76.0,
+                "Width": 970.0,
+                "Height": 1080.0
+              }
+            },
+            {
+              "ManagedSpaceID": 425,
+              "id64": 425,
+              "uuid": "t425",
+              "TileWindowID": 2398,
+              "fs_wid": 2398,
+              "type": 5,
+              "TileType": "Primary",
+              "pid": 609,
+              "appName": "WeChat",
+              "name": "WeChat",
+              "TileRect": {
+                "X": 5854.0,
+                "Y": -76.0,
+                "Width": 938.0,
+                "Height": 1080.0
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

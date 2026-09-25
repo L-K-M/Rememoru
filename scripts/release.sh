@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Version, verify, commit, and tag a zipapp release.
+# Version, verify, commit, and tag an app release.
 # Usage: scripts/release.sh X.Y.Z [--push]
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-readonly VERSION_FILE="$REPOSITORY_ROOT/rememoru/__init__.py"
+readonly VERSION_FILE="$REPOSITORY_ROOT/VERSION"
 readonly VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+$'
 
 usage() {
@@ -56,23 +56,15 @@ if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
   exit 1
 fi
 
-# __version__ is what the tool reports; the release tag must agree with it.
-python3 - "$version" "$VERSION_FILE" <<'EOF'
-import re, sys
-
-version, path = sys.argv[1], sys.argv[2]
-src = open(path).read()
-new, n = re.subn(r'__version__ = "[^"]*"', f'__version__ = "{version}"', src)
-if n != 1:
-    sys.exit("expected exactly one __version__ assignment")
-open(path, "w").write(new)
-EOF
+# VERSION becomes the app's CFBundleShortVersionString; the release tag
+# must agree with it.
+printf '%s\n' "$version" > "$VERSION_FILE"
 
 "$SCRIPT_DIR/build.sh" --clean
 
 git add "$VERSION_FILE"
 git commit -s -m "Release Rememoru $version" \
-  -m "Bump __version__ and publish the zipapp release."
+  -m "Bump VERSION and publish the app release."
 git tag -a "$tag" -m "Rememoru $version"
 
 if [[ "$push_option" == "--push" ]]; then

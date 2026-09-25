@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "created": "x",
+  "displays": [
+    {
+      "uuid": "d1",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 1920,
+        "h": 1080
+      },
+      "main": true,
+      "spaces": [
+        "s1",
+        "s2",
+        "s3"
+      ],
+      "active_space": "s2"
+    }
+  ],
+  "spaces": [
+    {
+      "uuid": "s1",
+      "id": 1,
+      "type": "user",
+      "display_uuid": "d1",
+      "index": 0,
+      "active": false,
+      "type_id": 0
+    },
+    {
+      "uuid": "s2",
+      "id": 2,
+      "type": "user",
+      "display_uuid": "d1",
+      "index": 1,
+      "active": true,
+      "type_id": 0
+    },
+    {
+      "uuid": "s3",
+      "id": 3,
+      "type": "fullscreen",
+      "display_uuid": "d1",
+      "index": 2,
+      "active": false,
+      "type_id": 4
+    }
+  ],
+  "windows": [
+    {
+      "id": 10,
+      "pid": 500,
+      "app": "Safari",
+      "bundle_id": "com.apple.Safari",
+      "title": "Docs",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 960,
+        "h": 1080
+      },
+      "onscreen": true,
+      "space_uuid": "s1",
+      "space_type": "user",
+      "display_uuid": "d1"
+    },
+    {
+      "id": 99,
+      "pid": 999,
+      "app": "Gone",
+      "bundle_id": null,
+      "title": null,
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 100,
+        "h": 100
+      },
+      "onscreen": true,
+      "space_uuid": "s2",
+      "space_type": "user",
+      "display_uuid": "d1"
+    }
+  ]
+}

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Rewrite Rememoru as a native Swift menu bar app, replacing the Python
+  tool and the AppleScript login helper (whose unanswered dialogs caused
+  "AppleEvent timed out (-1712)" at login). Save and restore from the
+  menu; restore at login through a real login item; permissions belong
+  to Rememoru.app itself; every restore step is verified and logged.
+- Fix window-to-space attribution: `SLSCopySpacesForWindows` is now
+  queried per window (it returns the union of spaces for a batch).
+- Fix display identification on macOS 26 by reading display UUIDs from
+  ColorSync instead of relying on enumeration order.
+- Find windows by CGWindowID (`_AXUIElementGetWindow`) instead of fuzzy
+  title/frame matching, including windows on other Spaces.
+- Switch Spaces with the Dock-swipe gesture; reorder fullscreen spaces
+  with the bridged space-move operation; recreate Split View through the
+  Window menu's Full Screen Tile items.
+- Command-line mode in the app binary: `doctor`, `list`, `snapshot`,
+  `restore [--dry-run]`, `dump`, `inspect-mc`.
+
+### Python version
+
 - Snapshot macOS window layouts to JSON: displays, Spaces (including fullscreen
   and Split View), space order, and per-window frames.
 - Restore snapshots in phases with `--dry-run`, per-phase opt-outs, and a
