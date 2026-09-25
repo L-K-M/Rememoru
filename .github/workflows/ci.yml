@@ -35,10 +35,9 @@ jobs:
           swift --version
           scripts/build.sh --clean
 
-      # Runners have a WindowServer session but no Accessibility grant, so
-      # this exercises the read-only paths against a real macOS and prints
-      # which private APIs resolve there. doctor exits 1 without
-      # Accessibility; anything else (a crash) fails the job.
+      # Runners have a real WindowServer session; this exercises the
+      # read-only paths and prints which private APIs resolve there. doctor
+      # exits 1 without Accessibility; anything else (a crash) fails.
       - name: Smoke-test the app binary
         run: |
           app=dist/Rememoru.app/Contents/MacOS/Rememoru
@@ -49,3 +48,9 @@ jobs:
           "$app" restore "$RUNNER_TEMP/layout.json" --dry-run
           "$app" dump > "$RUNNER_TEMP/dump.json"
           python3 -m json.tool "$RUNNER_TEMP/dump.json" > /dev/null
+
+      # The runner's shell has Accessibility, so the mutating paths can run
+      # for real: a frame restore, and a desktop created through Mission
+      # Control plus a bridged move onto it.
+      - name: End-to-end restore
+        run: scripts/e2e-macos.sh

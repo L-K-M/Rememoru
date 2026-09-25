@@ -41,8 +41,11 @@ dist/Rememoru.app/Contents/MacOS/Rememoru doctor   # on a Mac
 Keep decision logic in `RememoruCore` so it stays testable without a
 Mac; `RememoruMac` should only read state and perform steps. CI's macOS
 job smoke-tests `doctor`/`list`/`snapshot`/`restore --dry-run`/`dump`
-on a real macOS runner (no Accessibility there). Mutating paths need a
-real Mac; `Rememoru dump` prints raw SkyLight data for diagnosis.
+on a real macOS runner, then runs `scripts/e2e-macos.sh` (the runner's
+shell has Accessibility): a frame restore and a move onto a newly
+created desktop, checked against WindowServer. Fullscreen, Split View
+and multi-display paths still need a real Mac; `Rememoru dump` prints
+raw SkyLight data for diagnosis.
 
 ## macOS findings — don't regress these
 
