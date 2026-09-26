@@ -231,7 +231,7 @@ public enum RestorePlanner {
                     }
                     guard let member = snapshot.primaryWindowIndex(onSpace: space.uuid),
                           let match = matches[member] else {
-                        notes.append("fullscreen space \(space.uuid.prefix(8)): its window is gone")
+                        notes.append("fullscreen space \(space.uuid.prefix(8)): its window could not be matched")
                         continue
                     }
                     let current = live.space(id: match.live.spaceID)
@@ -249,7 +249,7 @@ public enum RestorePlanner {
                     let left = members.first { $0.element.splitSide == .left } ?? members.first
                     let right = members.first { $0.element.splitSide == .right && $0.offset != left?.offset }
                     guard let left, let right, let l = matches[left.offset], let r = matches[right.offset] else {
-                        notes.append("split view space \(space.uuid.prefix(8)): a window of the pair is gone")
+                        notes.append("split view space \(space.uuid.prefix(8)): a window of the pair could not be matched")
                         continue
                     }
                     let current = live.space(id: l.live.spaceID)

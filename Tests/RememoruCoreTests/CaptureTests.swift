@@ -71,6 +71,38 @@ final class WindowMatcherTests: XCTestCase {
         XCTAssertEqual(matches[0]?.basis, .position)
     }
 
+    func testMissingLiveTitleDoesNotOutrankChangedTitleAtSavedFrame() {
+        let record = saved(1, "Slack", "Old channel", x: 4872)
+        var helper = live(20, "Slack", "", x: 0)
+        helper.frame = Rect(x: 0, y: 482, w: 500, h: 500)
+        let window = live(21, "Slack", "New channel", x: 4872)
+
+        let matches = WindowMatcher.match([record], to: [helper, window])
+
+        XCTAssertEqual(matches[0]?.live.id, 21)
+        XCTAssertEqual(matches[0]?.basis, .position)
+    }
+
+    func testEmptyTitlesDoNotOutrankNamedWindowAtSavedFrame() {
+        let matches = WindowMatcher.match(
+            [saved(1, "Thaw", "", x: 1000)],
+            to: [live(20, "Thaw", "", x: 0), live(21, "Thaw", "General", x: 1000)]
+        )
+
+        XCTAssertEqual(matches[0]?.live.id, 21)
+        XCTAssertEqual(matches[0]?.basis, .position)
+    }
+
+    func testWindowIdentityStillWinsWithMissingTitles() {
+        let matches = WindowMatcher.match(
+            [saved(7, "Notes", "", pid: 42)],
+            to: [live(8, "Notes", "", pid: 42), live(7, "Notes", "Renamed", pid: 42, x: 900)]
+        )
+
+        XCTAssertEqual(matches[0]?.live.id, 7)
+        XCTAssertEqual(matches[0]?.basis, .sameWindow)
+    }
+
     func testNeverPairsDifferentApps() {
         let matches = WindowMatcher.match(
             [saved(1, "Mail", "Inbox", bundle: "com.apple.mail")],
