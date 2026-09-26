@@ -71,9 +71,10 @@ public enum WindowMatcher {
     static func titleScore(_ saved: String, _ live: String) -> Double {
         let s = normalized(saved)
         let l = normalized(live)
-        if s == l { return s.isEmpty ? 50 : 100 }
-        // missing titles (no Screen Recording grant) are weak evidence
-        if s.isEmpty || l.isEmpty { return 20 }
+        // Missing titles carry no identity evidence. A helper surface with
+        // no title must not outrank a real window whose title changed.
+        guard !s.isEmpty, !l.isEmpty else { return 0 }
+        if s == l { return 100 }
         if s.hasPrefix(l) || l.hasPrefix(s) { return 60 }
         if s.contains(l) || l.contains(s) { return 40 }
         return 0

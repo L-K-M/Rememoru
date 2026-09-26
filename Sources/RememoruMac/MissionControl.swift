@@ -103,19 +103,20 @@ enum MissionControl {
         return added
     }
 
-    /// Switches a display to the space at `index` by clicking its thumbnail.
-    static func showSpace(display: CGDirectDisplayID, index: Int) -> Bool {
+    /// Resolves the target's current index after Mission Control opens,
+    /// since a fullscreen transition may have changed the thumbnail order.
+    static func showSpace(display: CGDirectDisplayID, index: () -> Int?) -> Bool {
         guard open() != nil else { return false }
-        let buttons = wait(timeout: 2) { () -> [AXElement]? in
+        defer { close() }
+        // Dock publishes its AX tree before thumbnail actions are ready.
+        // hs.spaces.gotoSpace likewise waits for the opening animation.
+        Thread.sleep(forTimeInterval: 0.3)
+        guard let button = wait(timeout: 2, { () -> AXElement? in
             let buttons = spaceButtons(display: display)
-            return buttons.isEmpty ? nil : buttons
-        } ?? []
-        guard index < buttons.count, buttons[index].perform(kAXPressAction) else {
-            close()
-            return false
-        }
-        _ = wait(timeout: 2) { isOpen ? nil : true }
-        return true
+            guard let index = index(), buttons.indices.contains(index) else { return nil }
+            return buttons[index]
+        }), button.perform(kAXPressAction) else { return false }
+        return wait(timeout: 2) { isOpen ? nil : true } != nil
     }
 
     /// Polls `probe` until it returns a value or the timeout passes.

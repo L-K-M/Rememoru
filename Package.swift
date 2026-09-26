@@ -22,5 +22,9 @@ let package = Package(
             dependencies: ["RememoruCore"],
             resources: [.copy("Fixtures")]
         ),
+        .testTarget(
+            name: "RememoruMacTests",
+            dependencies: ["RememoruMac", "RememoruCore"]
+        ),
     ]
 )
