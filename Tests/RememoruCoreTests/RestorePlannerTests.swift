@@ -126,6 +126,29 @@ final class RestorePlannerTests: XCTestCase {
         })
     }
 
+    func testChangedTitleKeepsFullscreenWindowInsteadOfRestoringHelper() {
+        var savedWindow = saved(10, on: "f", frame: screen)
+        savedWindow.title = "Old channel - Slack"
+        let snap = snapshot(spaces: [("d", .desktop), ("f", .fullscreen)], active: "f",
+                            windows: [savedWindow])
+        let fullscreen = LiveSpace(id: 60, key: "current-fullscreen", kind: .fullscreen,
+                                   displayUUID: "D", index: 1, isActive: false)
+        let helper = LiveWindow(id: 20, pid: 2, appName: savedWindow.appName, title: "",
+                                frame: Rect(x: 0, y: 500, w: 500, h: 500), isOnscreen: false)
+        let realWindow = LiveWindow(id: 21, pid: 2, appName: savedWindow.appName,
+                                    title: "New channel - Slack", frame: screen,
+                                    isOnscreen: false, spaceID: fullscreen.id)
+        let state = live(desktops: 1, extra: [fullscreen], windows: [helper, realWindow])
+
+        let result = plan(snap, state)
+
+        XCTAssertEqual(result.unmatched, [])
+        XCTAssertEqual(result.steps, [
+            .arrangeSpaces(snapshotDisplay: "D", display: "D"),
+            .focus(display: "D", .spaceOf(window: realWindow.id)),
+        ], "a changed title must not cause the helper to be moved and fullscreened")
+    }
+
     func testSplitViewPairWithMissingWindowIsReported() {
         let snap = snapshot(spaces: [("d1", .desktop), ("s1", .splitView)],
                             windows: [saved(1, on: "s1", side: .left), saved(2, on: "s1", side: .right)])

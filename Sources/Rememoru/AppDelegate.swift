@@ -310,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if report.failures.count > 8 { lines.append("• …and \(report.failures.count - 8) more") }
         if !report.unmatched.isEmpty {
-            lines.append("\(report.unmatched.count) saved window(s) no longer exist: "
+            lines.append("\(report.unmatched.count) saved window(s) could not be matched: "
                 + report.unmatched.prefix(5).map(\.appName).joined(separator: ", "))
         }
         if alert(report.summary, lines.joined(separator: "\n"), buttons: ["OK", "Show Log"])

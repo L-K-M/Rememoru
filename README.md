@@ -157,3 +157,17 @@ wraps the system: SkyLight, CoreGraphics, Accessibility and Mission
 Control. The `Rememoru` target is the menu bar app and command-line entry
 point. See [`AGENTS.md`](AGENTS.md) for the macOS findings the code
 depends on.
+
+The macOS event regression test constructs a Dock-swipe event and checks
+its destination display; it does not post events or change Spaces.
+To verify switching on a test Mac, use a secondary display with at least
+three Spaces. Save a snapshot with its first Space active, switch to its
+last Space, then place the pointer on another display. Restore a copy of
+the snapshot with an empty `windows` array, using `--no-fullscreen
+--no-split --no-arrange`. Confirm with `list` or `dump` that the secondary
+display returns to the saved Space and the other display stays on its
+saved Space. Repeat in the opposite direction. Each gesture must be
+confirmed against the active Space before the next gesture is sent;
+the final Space must also match before the switch is reported successful.
+This checks display routing and multiple hops, which cannot be verified
+by constructing an event alone.
