@@ -29,6 +29,8 @@ public enum SpaceTarget: Equatable, Sendable {
 }
 
 public enum RestoreStep: Equatable, Sendable, CustomStringConvertible {
+    /// Preparation runs before matching, since opening replaces the startup window.
+    case openWeChat
     case createDesktops(display: String, count: Int)
     case setMinimized(WindowTarget, Bool)
     case exitFullscreen(WindowTarget)
@@ -46,6 +48,8 @@ public enum RestoreStep: Equatable, Sendable, CustomStringConvertible {
 
     public var description: String {
         switch self {
+        case .openWeChat:
+            return "open WeChat's main window"
         case .createDesktops(let display, let count):
             return "create \(count) desktop(s) on display \(display.prefix(8))"
         case .setMinimized(let window, let minimized):

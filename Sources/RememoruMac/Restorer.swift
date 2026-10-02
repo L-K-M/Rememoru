@@ -39,10 +39,27 @@ final class Restorer {
             return report
         }
 
-        progress("Reading windows…")
-        state = reader.read()
         if options.launchApps {
             launchMissingApps()
+        }
+        if WeChatStartup.shouldPrepare(snapshot: snapshot, options: options, mode: mode) {
+            progress("Opening WeChat…")
+            if let outcome = WeChatOpener.openIfNeeded(cancellation: cancellation) {
+                log("→ \(RestoreStep.openWeChat)")
+                logOutcome(outcome)
+                report.entries.append(.init(step: .openWeChat, outcome: outcome))
+            }
+        }
+        if cancellation.isCancelled {
+            report.cancelled = true
+            log(report.summary)
+            return report
+        }
+        // Opening can replace the startup window; match only the fresh state.
+        progress("Reading windows…")
+        state = reader.read()
+        if report.failures.contains(where: { $0.step == .openWeChat }) {
+            state.windows.removeAll { $0.bundleID == WeChatStartup.bundleID }
         }
         matches = WindowMatcher.match(snapshot.windows, to: state.windows)
         let plan = RestorePlanner.plan(snapshot: snapshot, live: state, matches: matches, options: options)
@@ -117,6 +134,8 @@ final class Restorer {
 
     private func execute(_ step: RestoreStep) -> RestoreReport.Outcome {
         switch step {
+        case .openWeChat:
+            return WeChatOpener.openIfNeeded(cancellation: cancellation) ?? .skipped("no startup panel")
         case .createDesktops(let display, let count):
             return createDesktops(display: display, count: count)
         case .setMinimized(let window, let minimized):
@@ -374,7 +393,6 @@ final class Restorer {
             }
             return ready ? true : nil
         }
-        state = reader.read()
     }
 
     // MARK: - Helpers

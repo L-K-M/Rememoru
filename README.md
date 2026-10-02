@@ -44,7 +44,10 @@ Click the menu bar icon:
   can reopen their windows, then restores the newest snapshot.
 - **Open Apps That Aren't Running** (on by default) launches apps that
   had saved windows before matching, and waits up to 20 s for their
-  windows.
+  windows. For a saved WeChat layout, it also presses **Open WeChat** on
+  the account startup panel, even if WeChat is already running, and waits
+  up to 20 s for the main window before matching. Phone confirmation, if
+  requested, still needs you.
 - **Show Log** opens `~/Library/Logs/Rememoru/rememoru.log`, which lists
   every step of every restore and whether it worked.
 
@@ -171,3 +174,15 @@ confirmed against the active Space before the next gesture is sent;
 the final Space must also match before the switch is reported successful.
 This checks display routing and multiple hops, which cannot be verified
 by constructing an event alone.
+
+To verify WeChat startup handling on a test Mac, save a layout with its
+main window open, then quit and reopen WeChat until the **Open WeChat**
+panel appears. With **Open Apps That Aren't Running** enabled, restore
+the saved layout. Confirm that the button is pressed once, the main
+window replaces the panel, and the log records that opening succeeded
+before any WeChat frame or Split View step. Repeat with WeChat's main
+window already open (including on another Space or in fullscreen), with
+the option disabled, and with `restore --dry-run --launch`;
+those runs must not press the button. If phone confirmation is requested,
+the restore must report a preparation failure after its bounded wait and
+continue restoring other apps.
