@@ -44,12 +44,12 @@ final class WeChatOpenerTests: XCTestCase {
         XCTAssertEqual(probes, 3)
     }
 
-    func testPressReceivesFreshOpeningDeadlineBeyondDiscoveryDeadline() {
+    func testPressReceivesFreshActionDeadlineBeyondDiscoveryDeadline() {
         var pressed = false
         let result = WeChatOpener.open(observe: { discoveryDeadline in
             if pressed { return .mainWindow }
-            return .openButton(press: { openingDeadline in
-                XCTAssertGreaterThan(openingDeadline.timeIntervalSince(discoveryDeadline), 0.5)
+            return .openButton(press: { actionDeadline in
+                XCTAssertGreaterThan(actionDeadline.timeIntervalSince(discoveryDeadline), 0.5)
                 pressed = true
                 return true
             })
@@ -57,6 +57,24 @@ final class WeChatOpenerTests: XCTestCase {
 
         XCTAssertEqual(result, .done)
         XCTAssertTrue(pressed)
+    }
+
+    func testReadinessGetsFreshTimeoutAfterSlowPressFinishes() {
+        var observations = 0
+        var presses = 0
+        let result = WeChatOpener.open(observe: { _ in
+            observations += 1
+            if observations > 1 { return .mainWindow }
+            return .openButton(press: { _ in
+                presses += 1
+                Thread.sleep(forTimeInterval: 0.02)
+                return true
+            })
+        }, cancellation: CancellationFlag(), timeout: 0.01, interval: 0.001)
+
+        XCTAssertEqual(result, .done)
+        XCTAssertEqual(presses, 1)
+        XCTAssertEqual(observations, 2)
     }
 
     func testFailedPressDoesNotWaitOrReportSuccess() {

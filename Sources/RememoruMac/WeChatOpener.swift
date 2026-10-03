@@ -52,12 +52,13 @@ enum WeChatOpener {
                 return pressed ? .done : nil
             case .openButton(let press):
                 if !pressed {
-                    deadline = Date().addingTimeInterval(timeout)
-                    guard press(deadline) else {
+                    let actionDeadline = Date().addingTimeInterval(timeout)
+                    guard press(actionDeadline) else {
                         return cancellation.isCancelled ? .skipped("cancelled")
                             : .failed("could not press WeChat's Open WeChat button")
                     }
                     pressed = true
+                    deadline = Date().addingTimeInterval(timeout)
                 }
             case .waiting:
                 break
