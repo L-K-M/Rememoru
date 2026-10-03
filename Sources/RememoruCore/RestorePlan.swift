@@ -189,13 +189,16 @@ public enum RestorePlanner {
                 steps.append(.exitFullscreen(ref))
             }
             let target = translate(saved.frame, from: snapDisplay.frame, to: liveDisplay.frame)
-            if !window.frame.isClose(to: target) {
-                steps.append(.setFrame(ref, target))
-            }
             let liveDesktops = live.desktops(onDisplay: liveDisplay.uuid)
             let currentOrdinal = liveDesktops.firstIndex { $0.id == window.spaceID }
-            if currentOrdinal != ordinal {
+            let needsMove = currentOrdinal != ordinal
+            if needsMove {
                 steps.append(.moveToDesktop(ref, display: liveDisplay.uuid, ordinal: ordinal))
+            }
+            // A cross-display move can clamp or reposition the window.
+            // Apply its final frame after it reaches the destination Space.
+            if needsMove || !window.frame.isClose(to: target) {
+                steps.append(.setFrame(ref, target))
             }
         }
 

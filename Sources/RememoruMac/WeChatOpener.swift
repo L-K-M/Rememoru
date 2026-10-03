@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import RememoruCore
 
 /// Opens the account startup panel before window ids are matched.
@@ -24,8 +25,11 @@ enum WeChatOpener {
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: WeChatStartup.bundleID).first
         else { return nil }
         let application = AXElement.application(app.processIdentifier)
+        let elements = WindowElements()
+        var previousWindowIDs = Set<UInt32>()
         return open(observe: { deadline in
-            observation(application: application, deadline: deadline, cancellation: cancellation)
+            observation(application: application, pid: app.processIdentifier, elements: elements,
+                        previousWindowIDs: &previousWindowIDs, deadline: deadline, cancellation: cancellation)
         }, cancellation: cancellation)
     }
 
@@ -69,32 +73,129 @@ enum WeChatOpener {
     }
 
     private static func observation(
-        application: AXElement, deadline: Date, cancellation: CancellationFlag
+        application: AXElement, pid: pid_t, elements: WindowElements,
+        previousWindowIDs: inout Set<UInt32>, deadline: Date, cancellation: CancellationFlag
     ) -> Observation {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
         guard canContinue() else { return .waiting }
+        let windowIDs = candidateWindowIDs(pid: pid, canContinue: canContinue)
+        updateCandidates(windowIDs, previous: &previousWindowIDs, reset: elements.invalidate)
+        guard canContinue() else { return .waiting }
         let windows = application.elements(kAXWindowsAttribute)
-        // The account panel has no minimize button. A missing Open button
-        // alone can instead mean that phone confirmation is pending.
+        var available: [UInt32: AXElement] = [:]
         for window in windows {
-            if canContinue(), window.role == kAXWindowRole,
-               canContinue(), window.subrole == kAXStandardWindowSubrole,
-               canContinue(), window.windowID != nil,
-               canContinue(), window.bool("AXFullScreen") == true
-                    || (canContinue() && window.element(kAXMinimizeButtonAttribute) != nil) {
-                return .mainWindow
+            guard canContinue() else { return .waiting }
+            if let id = window.windowID { available[id] = window }
+        }
+        return discover(
+            windowIDs: windowIDs, listedWindowIDs: Set(available.keys),
+            resolveHidden: { missing in
+                guard canContinue() else { return }
+                for (id, window) in elements.elements(for: missing, pid: pid) { available[id] = window }
+            },
+            inspect: { id in
+                guard let window = available[id] else { return .waiting }
+                return inspect(window: window, deadline: deadline, cancellation: cancellation)
+            },
+            deadline: deadline, cancellation: cancellation
+        )
+    }
+
+    static func updateCandidates(_ windowIDs: [UInt32], previous: inout Set<UInt32>, reset: () -> Void) {
+        let current = Set(windowIDs)
+        guard current != previous else { return }
+        // Opening can create a main window with an AX element id below the old cursor.
+        reset()
+        previous = current
+    }
+
+    /// WindowServer sees windows on every Space, while AXWindows may omit them.
+    /// The injected lookup keeps that discovery boundary testable without UI actions.
+    static func discover(
+        windowIDs: [UInt32], listedWindowIDs: Set<UInt32>, resolveHidden: (Set<UInt32>) -> Void,
+        inspect: (UInt32) -> Observation, deadline: Date, cancellation: CancellationFlag
+    ) -> Observation {
+        let canContinue = { !cancellation.isCancelled && Date() < deadline }
+        let eligible = Set(windowIDs)
+        func inspectWindows(_ ids: [UInt32]) -> Observation {
+            var startup: Observation?
+            for id in ids {
+                guard canContinue() else { return .waiting }
+                switch inspect(id) {
+                case .mainWindow: return .mainWindow
+                case .openButton(let press):
+                    if eligible.contains(id) { startup = startup ?? .openButton(press: press) }
+                case .waiting: continue
+                }
+            }
+            return startup ?? .waiting
+        }
+
+        // Sticky or minimized main windows may lack a single managed Space.
+        // They still prove readiness; only startup actions require a candidate id.
+        let listedIDs = windowIDs.filter { listedWindowIDs.contains($0) }
+            + listedWindowIDs.subtracting(eligible).sorted()
+        let listed = inspectWindows(listedIDs)
+        if case .mainWindow = listed { return .mainWindow }
+        let hidden = windowIDs.filter { !listedWindowIDs.contains($0) }
+        guard !hidden.isEmpty else { return listed }
+        guard canContinue() else { return .waiting }
+        resolveHidden(Set(hidden))
+        guard canContinue() else { return .waiting }
+        let resolved = inspectWindows(hidden)
+        if case .mainWindow = resolved { return .mainWindow }
+        if case .openButton = listed { return listed }
+        return resolved
+    }
+
+    private static func candidateWindowIDs(pid: pid_t, canContinue: () -> Bool) -> [UInt32] {
+        guard canContinue() else { return [] }
+        let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        guard canContinue() else { return [] }
+        let managed = SkyLight.managedSpaces()
+        var result: [UInt32] = []
+        for window in WindowFilter.candidates(from: info) where window.pid == pid {
+            guard canContinue() else { break }
+            if managed.resolveSpace(windowID: window.id, reported: SkyLight.spaces(ofWindow: window.id)) != nil {
+                result.append(window.id)
             }
         }
-        for window in windows {
-            guard canContinue() else { break }
-            guard let button = openButton(in: window, deadline: deadline, cancellation: cancellation) else { continue }
+        return result
+    }
+
+    private static func inspect(window: AXElement, deadline: Date, cancellation: CancellationFlag) -> Observation {
+        let canContinue = { !cancellation.isCancelled && Date() < deadline }
+        return classify(openButton: {
+            guard canContinue(), let button = openButton(in: window, deadline: deadline, cancellation: cancellation)
+            else { return nil }
             return .openButton(press: {
-                guard canContinue(), button.bool(kAXEnabledAttribute) == true,
-                      canContinue(), button.actionNames.contains(kAXPressAction), canContinue() else { return false }
+                // WeChat omits AXPress from its advertised actions even
+                // for the enabled Open button. Trust the action result.
+                guard canContinue(), button.bool(kAXEnabledAttribute) == true, canContinue() else { return false }
                 return button.perform(kAXPressAction)
             })
-        }
-        return .waiting
+        }, isMainWindow: {
+            guard canContinue(), window.role == kAXWindowRole,
+                  canContinue(), window.subrole == kAXStandardWindowSubrole,
+                  canContinue(), window.windowID != nil, canContinue() else { return false }
+            let fullscreen = window.bool("AXFullScreen") == true
+            guard canContinue() else { return false }
+            let minimize = window.element(kAXMinimizeButtonAttribute) != nil
+            guard canContinue() else { return false }
+            let zoom = window.element(kAXZoomButtonAttribute)
+            guard canContinue() else { return false }
+            let zoomEnabled = zoom?.bool(kAXEnabledAttribute) == true
+            return WeChatStartup.isMainWindow(
+                isStandardWindow: true, isFullscreen: fullscreen,
+                hasMinimizeButton: minimize, isZoomEnabled: zoomEnabled
+            )
+        })
+    }
+
+    static func classify(openButton: () -> Observation?, isMainWindow: () -> Bool) -> Observation {
+        if let startup = openButton() { return startup }
+        return isMainWindow() ? .mainWindow : .waiting
     }
 
     private static func openButton(in window: AXElement, deadline: Date, cancellation: CancellationFlag) -> AXElement? {

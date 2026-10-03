@@ -41,4 +41,19 @@ final class WeChatStartupTests: XCTestCase {
             XCTAssertFalse(WeChatStartup.isOpenButton(isButton: true, labels: [label]), label)
         }
     }
+
+    func testStartupMinimizeControlDoesNotProveMainWindowReadiness() {
+        XCTAssertFalse(WeChatStartup.isMainWindow(
+            isStandardWindow: true, isFullscreen: false, hasMinimizeButton: true, isZoomEnabled: false
+        ))
+        XCTAssertTrue(WeChatStartup.isMainWindow(
+            isStandardWindow: true, isFullscreen: false, hasMinimizeButton: true, isZoomEnabled: true
+        ))
+        XCTAssertTrue(WeChatStartup.isMainWindow(
+            isStandardWindow: true, isFullscreen: true, hasMinimizeButton: false, isZoomEnabled: false
+        ))
+        XCTAssertFalse(WeChatStartup.isMainWindow(
+            isStandardWindow: false, isFullscreen: true, hasMinimizeButton: true, isZoomEnabled: true
+        ))
+    }
 }

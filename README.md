@@ -183,6 +183,31 @@ window replaces the panel, and the log records that opening succeeded
 before any WeChat frame or Split View step. Repeat with WeChat's main
 window already open (including on another Space or in fullscreen), with
 the option disabled, and with `restore --dry-run --launch`;
-those runs must not press the button. If phone confirmation is requested,
-the restore must report a preparation failure after its bounded wait and
-continue restoring other apps.
+those runs must not press the button. Also leave the startup panel on an
+inactive Space before restoring: its remote accessibility window must be
+found, and the new main window must replace it before matching. The
+startup panel can expose a minimize button; confirm that it is still
+recognized as startup while its zoom control is disabled. Its Open button
+may omit `AXPress` from its advertised actions; use the performed action's
+result to verify the press. Repeat after a
+fresh app launch, including when its AX controls appear after the CG
+window. Remote probing must resume across its bounded scans and repeat a
+completed scan to discover late AX elements. If phone
+confirmation is requested, the restore must report a preparation failure
+after its bounded wait and continue restoring other apps.
+
+For a cross-display frame check, save a window on an external display,
+move it to a smaller display, and restore. Confirm that the desktop move
+precedes the final frame check and that WindowServer reports the saved
+position and size. For Proton Mail or Nextcloud Talk, restore a saved
+fullscreen window from a normal desktop and confirm its fullscreen Space
+exists; an accepted `AXFullScreen` write alone is insufficient. Repeat
+with the window already fullscreen to check that a fallback does not
+toggle it back out.
+
+Closed settings windows and invisible helper surfaces may remain in
+WindowServer. Check capture with StartupFolder and Thaw settings closed,
+then with their settings open. Offscreen surfaces on an active Space that
+are absent from a successful accessibility window listing are excluded;
+windows on other Spaces, minimized windows, hidden apps and failed
+accessibility reads must remain eligible.

@@ -12,4 +12,12 @@ public enum WeChatStartup {
     public static func isOpenButton(isButton: Bool, labels: [String]) -> Bool {
         isButton && labels.contains("Open WeChat")
     }
+
+    public static func isMainWindow(
+        isStandardWindow: Bool, isFullscreen: Bool, hasMinimizeButton: Bool, isZoomEnabled: Bool
+    ) -> Bool {
+        // The account startup panel can expose an enabled minimize control,
+        // but its zoom control is disabled, including while content loads.
+        isStandardWindow && (isFullscreen || (hasMinimizeButton && isZoomEnabled))
+    }
 }

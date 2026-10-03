@@ -3,6 +3,14 @@ import Foundation
 /// Turns `CGWindowListCopyWindowInfo` dictionaries into layout-relevant
 /// windows: normal-layer, visible-sized windows of real apps.
 public enum WindowFilter {
+    public enum AccessibilityPresence: Equatable, Sendable {
+        case found
+        /// A successful AXWindows read did not list this window.
+        case notListed
+        /// Permission, timeout or another AX error prevents classification.
+        case unavailable
+    }
+
     /// Processes that own system UI windows we never track.
     public static let ownerBlocklist: Set<String> = [
         "Dock", "WindowServer", "Window Server", "Window Manager", "WindowManager",
@@ -19,6 +27,16 @@ public enum WindowFilter {
 
     public static func candidates(from info: [[String: Any]]) -> [LiveWindow] {
         info.compactMap(candidate)
+    }
+
+    /// WindowServer retains closed backing surfaces. AX omission only
+    /// identifies those on an active Space, while their app is not hidden.
+    public static func isRetainedSurface(
+        _ window: LiveWindow, on space: LiveSpace?, applicationHidden: Bool,
+        accessibility: AccessibilityPresence
+    ) -> Bool {
+        accessibility == .notListed && space?.isActive == true
+            && !window.isOnscreen && !window.isMinimized && !applicationHidden
     }
 
     static func candidate(_ entry: [String: Any]) -> LiveWindow? {

@@ -19,7 +19,10 @@ enum SpaceSwitcher {
 
     /// Makes `spaceID` the visible space of its display. Returns the method
     /// that worked, or nil.
-    static func show(spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace]) -> Method? {
+    static func show(
+        spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace],
+        showMissionControl: (UInt32, () -> Int?) -> Bool = { MissionControl.showSpace(display: $0, index: $1) }
+    ) -> Method? {
         func current() -> [LiveSpace] {
             readSpaces().filter { $0.displayUUID == display.uuid }.sorted { $0.index < $1.index }
         }
@@ -47,13 +50,15 @@ enum SpaceSwitcher {
             }) != nil else { break }
         }
         if isShown() { return .gesture }
-        if MissionControl.showSpace(display: display.id, index: {
+        if showMissionControl(display.id, {
             current().firstIndex(where: { $0.id == spaceID })
         }),
            MissionControl.wait(timeout: 2, { isShown() ? true : nil }) != nil {
             return .missionControl
         }
-        return nil
+        // A thumbnail press can change the Space even when waiting for
+        // Mission Control's accessibility tree to close times out.
+        return isShown() ? .missionControl : nil
     }
 
     /// Posts `abs(steps)` Dock-swipe gestures on a display; negative steps

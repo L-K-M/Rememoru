@@ -66,9 +66,39 @@ final class RestorePlannerTests: XCTestCase {
         let ref = WindowTarget(state.windows[0])
         XCTAssertEqual(Array(steps.prefix(3)), [
             .createDesktops(display: "D", count: 2),
-            .setFrame(ref, target),
             .moveToDesktop(ref, display: "D", ordinal: 2),
+            .setFrame(ref, target),
         ])
+    }
+
+    func testCrossDisplayMovePrecedesFinalFrame() {
+        let target = Rect(x: 4872, y: -46, w: 751, h: 1050)
+        var snap = snapshot(spaces: [("external", .desktop)], windows: [saved(1, on: "external", frame: target)])
+        snap.displays[0].frame = Rect(x: 4872, y: -76, w: 1920, h: 1080)
+        var state = live(desktops: 1, windows: [window(1, space: 2, frame: Rect(x: 216, y: 91, w: 751, h: 891))])
+        state.displays[0].frame = Rect(x: 4872, y: -76, w: 1920, h: 1080)
+        state.displays.append(LiveDisplay(id: 2, uuid: "MAIN", frame: Rect(x: 0, y: 0, w: 1512, h: 982), isMain: true))
+        state.spaces.append(LiveSpace(id: 2, key: "main", kind: .desktop, displayUUID: "MAIN", index: 0, isActive: true))
+
+        let steps = plan(snap, state).steps
+        let ref = WindowTarget(state.windows[0])
+
+        XCTAssertEqual(steps, [
+            .moveToDesktop(ref, display: "D", ordinal: 0),
+            .setFrame(ref, target),
+        ], "move first so the destination display determines the window's size constraints")
+    }
+
+    func testMoveReappliesFrameEvenWhenInitialFrameMatches() {
+        let target = Rect(x: 100, y: 100, w: 700, h: 500)
+        let snap = snapshot(spaces: [("a", .desktop), ("b", .desktop)], windows: [saved(1, on: "b", frame: target)])
+        let state = live(desktops: 2, windows: [window(1, space: 1, frame: target)])
+        let ref = WindowTarget(state.windows[0])
+
+        XCTAssertEqual(plan(snap, state).steps, [
+            .moveToDesktop(ref, display: "D", ordinal: 1),
+            .setFrame(ref, target),
+        ], "moving can change the frame even when the window initially has the saved geometry")
     }
 
     func testWindowInFullscreenLeavesItBeforeMoving() {

@@ -2,6 +2,61 @@ import XCTest
 @testable import RememoruCore
 
 final class WindowFilterTests: XCTestCase {
+    private let activeDesktop = LiveSpace(
+        id: 5, key: "desktop", kind: .desktop, displayUUID: "D", index: 0, isActive: true
+    )
+
+    private func offscreenWindow(minimized: Bool = false) -> LiveWindow {
+        LiveWindow(
+            id: 1021, pid: 8936, appName: "StartupFolder", title: "Startup Folder",
+            frame: Rect(x: 342, y: 121, w: 800, h: 750), isOnscreen: false,
+            spaceID: 5, isMinimized: minimized
+        )
+    }
+
+    func testRejectsUnlistedOffscreenSurfaceOnActiveSpace() {
+        XCTAssertTrue(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: activeDesktop, applicationHidden: false, accessibility: .notListed
+        ))
+    }
+
+    func testPreservesRealWindowsOnInactiveSpaces() {
+        var space = activeDesktop
+        space.isActive = false
+
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: space, applicationHidden: false, accessibility: .notListed
+        ))
+    }
+
+    func testPreservesHiddenAppsMinimizedWindowsAndFailedAXReads() {
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: activeDesktop, applicationHidden: true, accessibility: .notListed
+        ))
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(minimized: true), on: activeDesktop,
+            applicationHidden: false, accessibility: .notListed
+        ))
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: activeDesktop, applicationHidden: false, accessibility: .unavailable
+        ))
+    }
+
+    func testPreservesVisibleAccessibleAndUnknownSpaceWindows() {
+        var visible = offscreenWindow()
+        visible.isOnscreen = true
+
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            visible, on: activeDesktop, applicationHidden: false, accessibility: .notListed
+        ))
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: activeDesktop, applicationHidden: false, accessibility: .found
+        ))
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: nil, applicationHidden: false, accessibility: .notListed
+        ))
+    }
+
     func testKeepsNormalWindowsOnly() {
         let info: [[String: Any]] = [
             ["kCGWindowNumber": 10, "kCGWindowOwnerName": "Safari", "kCGWindowOwnerPID": 500,

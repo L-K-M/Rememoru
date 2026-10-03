@@ -247,16 +247,35 @@ final class Restorer {
         guard let element = visibleElement(of: window) else { return .failed("no accessibility element for the window") }
         raise(window, element)
 
-        if !element.setBool("AXFullScreen", true) {
-            guard let item = menuItem(pid: window.pid, path: [["View", "Window"], ["Enter Full Screen"]]),
-                  item.perform(kAXPressAction) else {
-                return .failed("the app has no settable fullscreen state and no Enter Full Screen menu item")
+        let result = FullscreenEntry.run(
+            setFullscreen: { element.setBool("AXFullScreen", true) },
+            readFullscreen: { element.bool("AXFullScreen") },
+            confirm: { timeout in
+                MissionControl.wait(timeout: timeout) { self.spaceOf(window.id)?.kind == .fullscreen ? true : nil } != nil
+            },
+            performMenu: { command in
+                for top in ["View", "Window"] {
+                    guard let item = self.menuItem(pid: window.pid, path: [[top], [command.rawValue]]),
+                          item.bool(kAXEnabledAttribute) == true else { continue }
+                    // Finding a menu may open it and take time. Recheck at
+                    // the point of action so a late transition is preserved.
+                    if command == .toggle {
+                        if self.spaceOf(window.id)?.kind == .fullscreen { return true }
+                        guard element.bool("AXFullScreen") == false else { return false }
+                    }
+                    if item.perform(kAXPressAction) { return true }
+                }
+                return false
             }
-        }
-        let entered = MissionControl.wait(timeout: 5) { spaceOf(window.id)?.kind == .fullscreen ? true : nil } != nil
+        )
         Thread.sleep(forTimeInterval: 0.8)  // let the transition finish before the next space change
         refresh()
-        return entered ? .done : .failed("window did not enter fullscreen within 5 s")
+        switch result {
+        case .entered: return .done
+        case .unavailable:
+            return .failed("the app has no settable fullscreen state and no usable Enter or Toggle Full Screen menu item")
+        case .notConfirmed: return .failed("the window did not enter a fullscreen Space")
+        }
     }
 
     private func splitView(left: WindowTarget, right: WindowTarget, display: String, anchor: Int) -> RestoreReport.Outcome {
