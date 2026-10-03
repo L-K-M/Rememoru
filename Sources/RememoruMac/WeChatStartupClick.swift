@@ -4,7 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import RememoruCore
 
-/// Qt's startup control can support focus without an accessibility press.
+/// WeChat's startup control can omit an accessibility press action.
 /// A mouse fallback must target the current button, never a saved coordinate.
 enum WeChatStartupClick {
     static func click(

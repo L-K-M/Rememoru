@@ -180,8 +180,8 @@ enum WeChatOpener {
                     guard canPress() else { return false }
                     return button.perform(kAXPressAction)
                 }
-                // Qt can expose this button with only AXRaise (focus),
-                // and ignore an unadvertised AXPress. Click its verified hit target.
+                // This button can advertise only AXRaise. When AXPress
+                // is not offered, click its verified hit target.
                 var currentIDs = Set<UInt32>()
                 return WeChatStartupClick.click(
                     button: button, window: window, application: application, pid: pid,
