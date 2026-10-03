@@ -131,5 +131,27 @@ final class FullscreenEntryTests: XCTestCase {
         XCTAssertEqual(result, .unavailable)
         XCTAssertEqual(commands, [.enter], "an unknown state still prevents using Toggle Full Screen")
     }
+
+    func testAXFullscreenBecomingTrueBeforeToggleWaitsForWindowServer() {
+        var reads = 0
+        var timedConfirmations = 0
+        var commands: [FullscreenEntry.MenuCommand] = []
+        let result = FullscreenEntry.run(
+            setFullscreen: { true },
+            readFullscreen: {
+                reads += 1
+                return reads == 2
+            },
+            confirm: { timeout in
+                guard timeout == 5 else { return false }
+                timedConfirmations += 1
+                return timedConfirmations == 2
+            },
+            performMenu: { commands.append($0); return false }
+        )
+
+        XCTAssertEqual(result, .entered)
+        XCTAssertEqual(commands, [.enter], "a late AX transition must be confirmed without toggling it back out")
+    }
 }
 #endif
