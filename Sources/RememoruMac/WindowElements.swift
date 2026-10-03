@@ -9,34 +9,72 @@ import Foundation
 /// the element is recreated from a remote token (pid + "coco" magic +
 /// element id), probing element ids the way AltTab and yabai do.
 final class WindowElements {
+    enum ProbeMode {
+        case oncePerInvalidation
+        case repeatCompletedScans
+    }
+
+    struct Listing<Element> {
+        let windows: [UInt32: Element]
+        let isComplete: Bool
+
+        init(_ elements: [Element], windowID: (Element) -> UInt32?) {
+            var windows: [UInt32: Element] = [:]
+            var complete = true
+            for element in elements {
+                guard let id = windowID(element) else {
+                    complete = false
+                    continue
+                }
+                windows[id] = element
+            }
+            self.windows = windows
+            self.isComplete = complete
+        }
+    }
+
     /// Per-app time budget for probing element ids.
     static let probeBudget: TimeInterval = 1.0
     /// yabai probes the same range.
     static let maxElementID: UInt64 = 0x7fff
 
+    static func probeStart(after cursor: UInt64, mode: ProbeMode) -> UInt64? {
+        guard cursor >= maxElementID else { return cursor }
+        switch mode {
+        case .oncePerInvalidation: return nil
+        case .repeatCompletedScans: return 0
+        }
+    }
+
+    private let probeMode: ProbeMode
     private var cache: [UInt32: AXElement] = [:]
     /// Where the next probe of an app resumes. A probe stops once it found
     /// what it was asked for, so a later lookup for another window of the
     /// same app continues the scan instead of skipping it.
     private var nextElementID: [pid_t: UInt64] = [:]
 
+    init(probeMode: ProbeMode = .oncePerInvalidation) {
+        self.probeMode = probeMode
+    }
+
     func invalidate() {
         cache.removeAll()
         nextElementID.removeAll()
     }
 
-    /// Windows of an app from `kAXWindows`, keyed by window id.
-    func listed(pid: pid_t) -> [UInt32: AXElement] {
-        var result: [UInt32: AXElement] = [:]
-        for window in AXElement.application(pid).elements(kAXWindowsAttribute) {
-            if let id = window.windowID { result[id] = window }
-        }
-        return result
+    /// Windows of an app from `kAXWindows`, keyed by window id. nil means
+    /// AX failed, rather than a successful read with no listed windows.
+    func listed(pid: pid_t) -> Listing<AXElement>? {
+        guard HIServicesPrivate.getWindow != nil else { return nil }
+        guard let windows = AXElement.application(pid).elementsIfAvailable(kAXWindowsAttribute) else { return nil }
+        // Keep known IDs for lookup, but an unmapped window prevents
+        // proving that another CG candidate is absent from this list.
+        return Listing(windows, windowID: { $0.windowID })
     }
 
     func element(for windowID: UInt32, pid: pid_t) -> AXElement? {
         if let cached = cache[windowID] { return cached }
-        for (id, element) in listed(pid: pid) { cache[id] = element }
+        for (id, element) in listed(pid: pid)?.windows ?? [:] { cache[id] = element }
         if let found = cache[windowID] { return found }
         probe(pid: pid, wanting: [windowID])
         return cache[windowID]
@@ -46,7 +84,7 @@ final class WindowElements {
     func elements(for windowIDs: Set<UInt32>, pid: pid_t) -> [UInt32: AXElement] {
         var missing = windowIDs.filter { cache[$0] == nil }
         if !missing.isEmpty {
-            for (id, element) in listed(pid: pid) { cache[id] = element }
+            for (id, element) in listed(pid: pid)?.windows ?? [:] { cache[id] = element }
             missing = missing.filter { cache[$0] == nil }
         }
         if !missing.isEmpty { probe(pid: pid, wanting: missing) }
@@ -54,8 +92,12 @@ final class WindowElements {
     }
 
     private func probe(pid: pid_t, wanting: Set<UInt32>) {
-        let start = nextElementID[pid] ?? 0
-        guard start < Self.maxElementID, let create = HIServicesPrivate.createWithRemoteToken else { return }
+        guard let create = HIServicesPrivate.createWithRemoteToken else { return }
+        let previous = nextElementID[pid] ?? 0
+        // Bounded startup preparation can repeat a completed scan because
+        // a CG window may precede its AX element. General misses stay cached
+        // until invalidation to avoid repeating the full probe budget.
+        guard let start = Self.probeStart(after: previous, mode: probeMode) else { return }
         var remaining = wanting
         let deadline = Date().addingTimeInterval(Self.probeBudget)
         var token = Data(count: 20)

@@ -41,4 +41,52 @@ final class WeChatStartupTests: XCTestCase {
             XCTAssertFalse(WeChatStartup.isOpenButton(isButton: true, labels: [label]), label)
         }
     }
+
+    func testStartupMinimizeControlDoesNotProveMainWindowReadiness() {
+        XCTAssertFalse(WeChatStartup.isMainWindow(
+            isStandardWindow: true, isFullscreen: false, hasMinimizeButton: true, isZoomEnabled: false
+        ))
+        XCTAssertTrue(WeChatStartup.isMainWindow(
+            isStandardWindow: true, isFullscreen: false, hasMinimizeButton: true, isZoomEnabled: true
+        ))
+        XCTAssertTrue(WeChatStartup.isMainWindow(
+            isStandardWindow: true, isFullscreen: true, hasMinimizeButton: false, isZoomEnabled: false
+        ))
+        XCTAssertFalse(WeChatStartup.isMainWindow(
+            isStandardWindow: false, isFullscreen: true, hasMinimizeButton: true, isZoomEnabled: true
+        ))
+    }
+
+    private func canClick(
+        isButton: Bool = true, labels: [String] = ["Open WeChat"], isEnabled: Bool = true,
+        isFrontmost: Bool = true, isWindowOnscreen: Bool = true, hitMatchesButton: Bool = true
+    ) -> Bool {
+        WeChatStartup.canClickOpenButton(
+            isButton: isButton, labels: labels, isEnabled: isEnabled, isFrontmost: isFrontmost,
+            isWindowOnscreen: isWindowOnscreen, hitMatchesButton: hitMatchesButton
+        )
+    }
+
+    func testExactEnabledVisibleFrontmostOpenButtonCanBeClicked() {
+        XCTAssertTrue(canClick())
+    }
+
+    func testNativeClickRequiresEveryGuard() {
+        for (condition, result) in [
+            ("wrong role", canClick(isButton: false)),
+            ("disabled button", canClick(isEnabled: false)),
+            ("another frontmost app", canClick(isFrontmost: false)),
+            ("hidden or missing window", canClick(isWindowOnscreen: false)),
+            ("another element covers the button", canClick(hitMatchesButton: false)),
+        ] {
+            XCTAssertFalse(result, condition)
+        }
+    }
+
+    func testNativeClickPreservesExactStartupLabel() {
+        for label in ["Switch Account", "Transfer files only", "Confirm on Phone", "Open WeChat settings", ""] {
+            XCTAssertFalse(canClick(labels: [label]), label)
+        }
+        XCTAssertFalse(canClick(labels: []))
+    }
 }

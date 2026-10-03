@@ -36,7 +36,13 @@ struct AXElement {
     }
 
     func elements(_ attribute: String) -> [AXElement] {
-        guard let array = value(attribute) as? [AXUIElement] else { return [] }
+        elementsIfAvailable(attribute) ?? []
+    }
+
+    /// An empty list is meaningful for window classification; an AX
+    /// error or unavailable attribute must remain unknown instead.
+    func elementsIfAvailable(_ attribute: String) -> [AXElement]? {
+        guard let array = value(attribute) as? [AXUIElement] else { return nil }
         return array.map(AXElement.init)
     }
 

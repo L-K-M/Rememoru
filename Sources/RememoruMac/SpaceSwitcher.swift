@@ -19,41 +19,58 @@ enum SpaceSwitcher {
 
     /// Makes `spaceID` the visible space of its display. Returns the method
     /// that worked, or nil.
-    static func show(spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace]) -> Method? {
+    static func show(
+        spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace],
+        canContinue: @escaping () -> Bool = { true },
+        showMissionControl: (UInt32, () -> Int?) -> Bool = { MissionControl.showSpace(display: $0, index: $1) }
+    ) -> Method? {
+        guard canContinue() else { return nil }
         func current() -> [LiveSpace] {
-            readSpaces().filter { $0.displayUUID == display.uuid }.sorted { $0.index < $1.index }
+            guard canContinue() else { return [] }
+            return readSpaces().filter { $0.displayUUID == display.uuid }.sorted { $0.index < $1.index }
         }
         func isShown() -> Bool { current().first { $0.isActive }?.id == spaceID }
 
-        if isShown() { return .alreadyShown }
+        if isShown() { return canContinue() ? .alreadyShown : nil }
         let initial = current()
-        guard initial.contains(where: { $0.id == spaceID }) else { return nil }
+        guard canContinue(), initial.contains(where: { $0.id == spaceID }) else { return nil }
 
         // Dock processes gestures asynchronously. Confirm each hop before
         // sending another, and recalculate after Spaces are reordered or
         // removed by a fullscreen transition. Bound retries if state keeps
         // changing while the restore runs.
         for _ in 0..<initial.count {
+            guard canContinue() else { return nil }
             let spaces = current()
             guard let target = spaces.firstIndex(where: { $0.id == spaceID }),
                   let active = spaces.firstIndex(where: \.isActive) else { break }
-            if active == target { return .gesture }
+            if active == target { return canContinue() ? .gesture : nil }
             let previousID = spaces[active].id
+            guard canContinue() else { return nil }
             swipe(steps: target > active ? 1 : -1, on: display)
             guard MissionControl.wait(timeout: 1.5, { () -> Bool? in
+                guard canContinue() else { return false }
                 guard let activeID = current().first(where: \.isActive)?.id,
                       activeID != previousID else { return nil }
                 return true
-            }) != nil else { break }
+            }) == true else { break }
         }
-        if isShown() { return .gesture }
-        if MissionControl.showSpace(display: display.id, index: {
+        guard canContinue() else { return nil }
+        if isShown() { return canContinue() ? .gesture : nil }
+        guard canContinue() else { return nil }
+        if showMissionControl(display.id, {
             current().firstIndex(where: { $0.id == spaceID })
         }),
-           MissionControl.wait(timeout: 2, { isShown() ? true : nil }) != nil {
-            return .missionControl
+           MissionControl.wait(timeout: 2, { () -> Bool? in
+               guard canContinue() else { return false }
+               return isShown() ? true : nil
+           }) == true {
+            return canContinue() ? .missionControl : nil
         }
-        return nil
+        // A thumbnail press can change the Space even when waiting for
+        // Mission Control's accessibility tree to close times out.
+        guard canContinue(), isShown(), canContinue() else { return nil }
+        return .missionControl
     }
 
     /// Posts `abs(steps)` Dock-swipe gestures on a display; negative steps
