@@ -20,4 +20,12 @@ public enum WeChatStartup {
         // but its zoom control is disabled, including while content loads.
         isStandardWindow && (isFullscreen || (hasMinimizeButton && isZoomEnabled))
     }
+
+    public static func canClickOpenButton(
+        isButton: Bool, labels: [String], isEnabled: Bool, isFrontmost: Bool,
+        isWindowOnscreen: Bool, hitMatchesButton: Bool
+    ) -> Bool {
+        isOpenButton(isButton: isButton, labels: labels) && isEnabled
+            && isFrontmost && isWindowOnscreen && hitMatchesButton
+    }
 }

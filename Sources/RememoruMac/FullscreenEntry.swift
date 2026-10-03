@@ -35,7 +35,8 @@ enum FullscreenEntry {
             return confirm(5) ? .entered : .notConfirmed
         }
         if confirm(0) { return .entered }
-        guard readFullscreen() == false else { return .notConfirmed }
+        guard let fullscreen = readFullscreen() else { return accepted ? .notConfirmed : .unavailable }
+        guard !fullscreen else { return .notConfirmed }
         guard performMenu(.toggle) else { return accepted ? .notConfirmed : .unavailable }
         return confirm(5) ? .entered : .notConfirmed
     }

@@ -14,7 +14,7 @@ enum WeChatOpener {
 
     enum Observation {
         case mainWindow
-        case openButton(press: () -> Bool)
+        case openButton(press: (Date) -> Bool)
         case waiting
     }
 
@@ -25,7 +25,7 @@ enum WeChatOpener {
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: WeChatStartup.bundleID).first
         else { return nil }
         let application = AXElement.application(app.processIdentifier)
-        let elements = WindowElements()
+        let elements = WindowElements(probeMode: .repeatCompletedScans)
         var previousWindowIDs = Set<UInt32>()
         return open(observe: { deadline in
             observation(application: application, pid: app.processIdentifier, elements: elements,
@@ -52,12 +52,12 @@ enum WeChatOpener {
                 return pressed ? .done : nil
             case .openButton(let press):
                 if !pressed {
-                    guard press() else {
+                    deadline = Date().addingTimeInterval(timeout)
+                    guard press(deadline) else {
                         return cancellation.isCancelled ? .skipped("cancelled")
                             : .failed("could not press WeChat's Open WeChat button")
                     }
                     pressed = true
-                    deadline = Date().addingTimeInterval(timeout)
                 }
             case .waiting:
                 break
@@ -95,7 +95,8 @@ enum WeChatOpener {
             },
             inspect: { id in
                 guard let window = available[id] else { return .waiting }
-                return inspect(window: window, deadline: deadline, cancellation: cancellation)
+                return inspect(window: window, application: application, pid: pid, elements: elements,
+                               deadline: deadline, cancellation: cancellation)
             },
             deadline: deadline, cancellation: cancellation
         )
@@ -164,16 +165,35 @@ enum WeChatOpener {
         return result
     }
 
-    private static func inspect(window: AXElement, deadline: Date, cancellation: CancellationFlag) -> Observation {
+    private static func inspect(
+        window: AXElement, application: AXElement, pid: pid_t, elements: WindowElements,
+        deadline: Date, cancellation: CancellationFlag
+    ) -> Observation {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
         return classify(openButton: {
             guard canContinue(), let button = openButton(in: window, deadline: deadline, cancellation: cancellation)
             else { return nil }
-            return .openButton(press: {
-                // WeChat omits AXPress from its advertised actions even
-                // for the enabled Open button. Trust the action result.
-                guard canContinue(), button.bool(kAXEnabledAttribute) == true, canContinue() else { return false }
-                return button.perform(kAXPressAction)
+            return .openButton(press: { openingDeadline in
+                let canPress = { !cancellation.isCancelled && Date() < openingDeadline }
+                guard canPress(), button.bool(kAXEnabledAttribute) == true, canPress() else { return false }
+                if button.actionNames.contains(kAXPressAction) {
+                    guard canPress() else { return false }
+                    return button.perform(kAXPressAction)
+                }
+                // Qt can expose this button with only AXRaise (focus),
+                // and ignore an unadvertised AXPress. Click its verified hit target.
+                var currentIDs = Set<UInt32>()
+                return WeChatStartupClick.click(
+                    button: button, window: window, application: application, pid: pid,
+                    deadline: openingDeadline, cancellation: cancellation, isReady: {
+                        let current = observation(
+                            application: application, pid: pid, elements: elements,
+                            previousWindowIDs: &currentIDs, deadline: openingDeadline, cancellation: cancellation
+                        )
+                        if case .mainWindow = current { return true }
+                        return false
+                    }
+                )
             })
         }, isMainWindow: {
             guard canContinue(), window.role == kAXWindowRole,

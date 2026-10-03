@@ -8,12 +8,12 @@ final class WeChatOpenerTests: XCTestCase {
         var readinessChecks = 0
         var presses = 0
         let observation = WeChatOpener.classify(
-            openButton: { .openButton(press: { presses += 1; return true }) },
+            openButton: { .openButton(press: { _ in presses += 1; return true }) },
             isMainWindow: { readinessChecks += 1; return true }
         )
 
         guard case .openButton(let press) = observation else { return XCTFail("expected the exact startup action") }
-        XCTAssertTrue(press())
+        XCTAssertTrue(press(Date().addingTimeInterval(1)))
         XCTAssertEqual(presses, 1)
         XCTAssertEqual(readinessChecks, 0)
     }
@@ -34,7 +34,7 @@ final class WeChatOpenerTests: XCTestCase {
         let result = WeChatOpener.open(
             observe: { _ in
                 probes += 1
-                return probes == 3 ? .mainWindow : .openButton(press: { presses += 1; return true })
+                return probes == 3 ? .mainWindow : .openButton(press: { _ in presses += 1; return true })
             },
             cancellation: CancellationFlag(), timeout: 1, interval: 0.001
         )
@@ -44,10 +44,25 @@ final class WeChatOpenerTests: XCTestCase {
         XCTAssertEqual(probes, 3)
     }
 
+    func testPressReceivesFreshOpeningDeadlineBeyondDiscoveryDeadline() {
+        var pressed = false
+        let result = WeChatOpener.open(observe: { discoveryDeadline in
+            if pressed { return .mainWindow }
+            return .openButton(press: { openingDeadline in
+                XCTAssertGreaterThan(openingDeadline.timeIntervalSince(discoveryDeadline), 0.5)
+                pressed = true
+                return true
+            })
+        }, cancellation: CancellationFlag(), timeout: 1, discoveryTimeout: 0.01, interval: 0.001)
+
+        XCTAssertEqual(result, .done)
+        XCTAssertTrue(pressed)
+    }
+
     func testFailedPressDoesNotWaitOrReportSuccess() {
         var probes = 0
         let result = WeChatOpener.open(
-            observe: { _ in probes += 1; return .openButton(press: { false }) }, cancellation: CancellationFlag()
+            observe: { _ in probes += 1; return .openButton(press: { _ in false }) }, cancellation: CancellationFlag()
         )
 
         guard case .failed = result else { return XCTFail("expected a failed press") }
@@ -58,7 +73,7 @@ final class WeChatOpenerTests: XCTestCase {
         var presses = 0
         let result = WeChatOpener.open(
             observe: { _ in
-                presses == 0 ? .openButton(press: { presses += 1; return true }) : .waiting
+                presses == 0 ? .openButton(press: { _ in presses += 1; return true }) : .waiting
             }, cancellation: CancellationFlag(), timeout: 0.01, interval: 0.001
         )
         guard let result, case .failed(let reason) = result else { return XCTFail("expected readiness failure") }
@@ -76,7 +91,7 @@ final class WeChatOpenerTests: XCTestCase {
         cancellation.cancel()
         var presses = 0
         let result = WeChatOpener.open(
-            observe: { _ in .openButton(press: { presses += 1; return true }) }, cancellation: cancellation
+            observe: { _ in .openButton(press: { _ in presses += 1; return true }) }, cancellation: cancellation
         )
 
         XCTAssertEqual(result, .skipped("cancelled"))
@@ -88,7 +103,7 @@ final class WeChatOpenerTests: XCTestCase {
         var presses = 0
         let result = WeChatOpener.open(
             observe: { _ in
-                if presses == 0 { return .openButton(press: { presses += 1; return true }) }
+                if presses == 0 { return .openButton(press: { _ in presses += 1; return true }) }
                 cancellation.cancel()
                 return .waiting
             }, cancellation: cancellation,
@@ -105,7 +120,7 @@ final class WeChatOpenerTests: XCTestCase {
         let result = WeChatOpener.open(observe: { _ in
             probes += 1
             if probes < 3 { return .waiting }
-            if probes == 3 { return .openButton(press: { presses += 1; return true }) }
+            if probes == 3 { return .openButton(press: { _ in presses += 1; return true }) }
             return .mainWindow
         }, cancellation: CancellationFlag(), timeout: 1, interval: 0.001)
 
@@ -133,7 +148,7 @@ final class WeChatOpenerTests: XCTestCase {
         var presses = 0
         let result = WeChatOpener.open(observe: { _ in
             cancellation.cancel()
-            return .openButton(press: { presses += 1; return true })
+            return .openButton(press: { _ in presses += 1; return true })
         }, cancellation: cancellation)
 
         XCTAssertEqual(result, .skipped("cancelled"))
@@ -152,10 +167,10 @@ final class WeChatOpenerTests: XCTestCase {
                 windowIDs: currentWindowIDs, listedWindowIDs: [1383],
                 resolveHidden: { ids in resolved.append(ids); available.formUnion(ids) },
                 inspect: { id in
-                    if id == 1383 { return .openButton(press: { helperPresses += 1; return true }) }
+                    if id == 1383 { return .openButton(press: { _ in helperPresses += 1; return true }) }
                     guard available.contains(id) else { return .waiting }
                     if id == 250 { return .mainWindow }
-                    return .openButton(press: {
+                    return .openButton(press: { _ in
                         presses += 1
                         currentWindowIDs = [250]
                         return true
@@ -197,7 +212,7 @@ final class WeChatOpenerTests: XCTestCase {
                 resolveHidden: { resolved.formUnion($0) },
                 inspect: { id in
                     if id == 250 { return resolved.contains(id) ? .mainWindow : .waiting }
-                    return .openButton(press: { presses += 1; return true })
+                    return .openButton(press: { _ in presses += 1; return true })
                 },
                 deadline: deadline, cancellation: cancellation
             )
@@ -229,7 +244,7 @@ final class WeChatOpenerTests: XCTestCase {
                 resolveHidden: { _ in XCTFail("both windows are already listed") },
                 inspect: { id in
                     if id == 250 { return .mainWindow }
-                    return .openButton(press: { presses += 1; return true })
+                    return .openButton(press: { _ in presses += 1; return true })
                 },
                 deadline: deadline, cancellation: cancellation
             )
@@ -265,7 +280,7 @@ final class WeChatOpenerTests: XCTestCase {
                 inspect: { id in
                     guard available.contains(id) else { return .waiting }
                     if id == 250 { return .mainWindow }
-                    return .openButton(press: {
+                    return .openButton(press: { _ in
                         presses += 1
                         currentWindowIDs = [250]
                         return true

@@ -188,8 +188,12 @@ inactive Space before restoring: its remote accessibility window must be
 found, and the new main window must replace it before matching. The
 startup panel can expose a minimize button; confirm that it is still
 recognized as startup while its zoom control is disabled. Its Open button
-may omit `AXPress` from its advertised actions; use the performed action's
-result to verify the press. Repeat after a
+may omit `AXPress` from its advertised actions. In that case, restore
+shows the startup Space, raises WeChat, verifies the current enabled
+button with an accessibility hit test, and clicks it once. The main
+window must still appear before opening is counted as successful. Check
+that a disabled or obscured button is not clicked and that the pointer
+returns to its original position. Repeat after a
 fresh app launch, including when its AX controls appear after the CG
 window. Remote probing must resume across its bounded scans and repeat a
 completed scan to discover late AX elements. If phone

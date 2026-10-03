@@ -118,5 +118,18 @@ final class FullscreenEntryTests: XCTestCase {
 
         XCTAssertEqual(result, .unavailable)
     }
+
+    func testUnsupportedAXWithUnknownStateAndNoEnterMenuIsUnavailable() {
+        var commands: [FullscreenEntry.MenuCommand] = []
+        let result = FullscreenEntry.run(
+            setFullscreen: { false },
+            readFullscreen: { nil },
+            confirm: { _ in false },
+            performMenu: { commands.append($0); return false }
+        )
+
+        XCTAssertEqual(result, .unavailable)
+        XCTAssertEqual(commands, [.enter], "an unknown state still prevents using Toggle Full Screen")
+    }
 }
 #endif

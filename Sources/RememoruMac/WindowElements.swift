@@ -9,6 +9,11 @@ import Foundation
 /// the element is recreated from a remote token (pid + "coco" magic +
 /// element id), probing element ids the way AltTab and yabai do.
 final class WindowElements {
+    enum ProbeMode {
+        case oncePerInvalidation
+        case repeatCompletedScans
+    }
+
     struct Listing<Element> {
         let windows: [UInt32: Element]
         let isComplete: Bool
@@ -33,11 +38,24 @@ final class WindowElements {
     /// yabai probes the same range.
     static let maxElementID: UInt64 = 0x7fff
 
+    static func probeStart(after cursor: UInt64, mode: ProbeMode) -> UInt64? {
+        guard cursor >= maxElementID else { return cursor }
+        switch mode {
+        case .oncePerInvalidation: return nil
+        case .repeatCompletedScans: return 0
+        }
+    }
+
+    private let probeMode: ProbeMode
     private var cache: [UInt32: AXElement] = [:]
     /// Where the next probe of an app resumes. A probe stops once it found
     /// what it was asked for, so a later lookup for another window of the
     /// same app continues the scan instead of skipping it.
     private var nextElementID: [pid_t: UInt64] = [:]
+
+    init(probeMode: ProbeMode = .oncePerInvalidation) {
+        self.probeMode = probeMode
+    }
 
     func invalidate() {
         cache.removeAll()
@@ -76,9 +94,10 @@ final class WindowElements {
     private func probe(pid: pid_t, wanting: Set<UInt32>) {
         guard let create = HIServicesPrivate.createWithRemoteToken else { return }
         let previous = nextElementID[pid] ?? 0
-        // A CG window can precede its AX element. Once a scan completes,
-        // allow a later bounded probe to find newly initialized low ids.
-        let start = previous < Self.maxElementID ? previous : 0
+        // Bounded startup preparation can repeat a completed scan because
+        // a CG window may precede its AX element. General misses stay cached
+        // until invalidation to avoid repeating the full probe budget.
+        guard let start = Self.probeStart(after: previous, mode: probeMode) else { return }
         var remaining = wanting
         let deadline = Date().addingTimeInterval(Self.probeBudget)
         var token = Data(count: 20)
