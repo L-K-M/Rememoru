@@ -58,15 +58,17 @@ fi
 
 # VERSION becomes the app's CFBundleShortVersionString; the release tag
 # must agree with it.
-printf '%s\n' "$version" > "$VERSION_FILE"
-
-# Keep the README release marker in step with the tag.
+# Keep the README release marker in step with the tag. Write VERSION only
+# after the marker is verified, so a missing marker aborts before any
+# mutation (the sed is a no-op then and nothing has been touched).
 sed -i '' -E 's|(<!-- version -->)[^<]*(<!-- /version -->)|\1'"$version"'\2|' \
   "$REPOSITORY_ROOT/README.md"
 grep -Fq "<!-- version -->$version<!-- /version -->" "$REPOSITORY_ROOT/README.md" || {
-  echo "error: README.md release marker was not updated to $version" >&2
+  echo "error: README.md release marker was not updated to $version; expected '<!-- version -->$version<!-- /version -->'" >&2
   exit 1
 }
+
+printf '%s\n' "$version" > "$VERSION_FILE"
 
 "$SCRIPT_DIR/build.sh" --clean
 
