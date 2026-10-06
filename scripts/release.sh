@@ -60,9 +60,13 @@ fi
 # must agree with it.
 printf '%s\n' "$version" > "$VERSION_FILE"
 
+# Keep the README release marker in step with the tag.
+sed -i '' -E 's|(<!-- version -->)[^<]*(<!-- /version -->)|\1'"$version"'\2|' \
+  "$REPOSITORY_ROOT/README.md"
+
 "$SCRIPT_DIR/build.sh" --clean
 
-git add "$VERSION_FILE"
+git add "$VERSION_FILE" "$REPOSITORY_ROOT/README.md"
 git commit -s -m "Release Rememoru $version" \
   -m "Bump VERSION and publish the app release."
 git tag -a "$tag" -m "Rememoru $version"

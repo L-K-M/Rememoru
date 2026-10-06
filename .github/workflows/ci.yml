@@ -5,10 +5,14 @@ on:
   push:
     branches: [main]
 
-# Cancel an in-progress run when a branch is pushed again.
+permissions:
+  contents: read
+
+# Cancel an in-progress run only for a superseded PR push; a cancelled main
+# commit masks breakage and breaks CI bisection.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   core:
