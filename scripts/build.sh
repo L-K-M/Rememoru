@@ -20,6 +20,12 @@ for arg in "$@"; do
   esac
 done
 
+# Fail fast: there is no app bundle to install off macOS, so don't build first.
+if [[ "$INSTALL" == 1 && "$(uname -s)" != "Darwin" ]]; then
+  echo "!! --install needs macOS: there is no app bundle to install here" >&2
+  exit 1
+fi
+
 if [[ "$CLEAN" == 1 ]]; then
   rm -rf .build dist
 fi
@@ -38,7 +44,4 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   else
     "$SCRIPT_DIR/build-app.sh"
   fi
-elif [[ "$INSTALL" == 1 ]]; then
-  echo "!! --install needs macOS: there is no app bundle to install here" >&2
-  exit 1
 fi

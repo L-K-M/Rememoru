@@ -18,6 +18,10 @@ readonly REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly APP="$REPOSITORY_ROOT/dist/Rememoru.app"
 readonly VERSION="$(tr -d '[:space:]' < "$REPOSITORY_ROOT/VERSION")"
 readonly IDENTITY="${CODESIGN_IDENTITY:--}"
+# Was io.github.l-k-m.rememoru until the namespace pass; that id never shipped
+# in a tagged release (the Python version used com.rememoru.*), so no install
+# base carries it — but macOS keys TCC grants and defaults to this string, so
+# do not change it again casually.
 readonly BUNDLE_ID="${BUNDLE_ID:-ch.lkmc.Rememoru}"
 
 install_option="${1:-}"
