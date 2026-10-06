@@ -10,7 +10,7 @@
 #                      signature changes with every build, so each rebuild
 #                      needs the grant again. An "Apple Development" or
 #                      self-signed code-signing identity keeps it.
-#   BUNDLE_ID          bundle identifier (default io.github.l-k-m.rememoru)
+#   BUNDLE_ID          bundle identifier (default ch.lkmc.Rememoru)
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,7 +18,11 @@ readonly REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly APP="$REPOSITORY_ROOT/dist/Rememoru.app"
 readonly VERSION="$(tr -d '[:space:]' < "$REPOSITORY_ROOT/VERSION")"
 readonly IDENTITY="${CODESIGN_IDENTITY:--}"
-readonly BUNDLE_ID="${BUNDLE_ID:-io.github.l-k-m.rememoru}"
+# Was io.github.l-k-m.rememoru until the namespace pass; that id never shipped
+# in a tagged release (the Python version used com.rememoru.*), so no install
+# base carries it — but macOS keys TCC grants and defaults to this string, so
+# do not change it again casually.
+readonly BUNDLE_ID="${BUNDLE_ID:-ch.lkmc.Rememoru}"
 
 install_option="${1:-}"
 if [[ -n "$install_option" && "$install_option" != "--install" ]]; then

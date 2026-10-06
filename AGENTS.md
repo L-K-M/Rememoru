@@ -34,7 +34,8 @@ instead of aborting launch. Keep it that way.
 
 ```sh
 swift build && swift test        # anywhere; Core logic + fixtures
-scripts/build.sh                 # plus the app bundle on macOS
+scripts/build.sh                 # plus the app bundle on macOS (--install
+                                 #  copies it to ~/Applications)
 dist/Rememoru.app/Contents/MacOS/Rememoru doctor   # on a Mac
 ```
 
