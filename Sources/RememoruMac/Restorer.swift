@@ -299,47 +299,53 @@ final class Restorer {
     }
 
     private func splitView(left: WindowTarget, right: WindowTarget, display: String, anchor: Int) -> RestoreReport.Outcome {
+        let initiatingSide = SplitViewInitiation.preferredSide(
+            leftBundleID: NSRunningApplication(processIdentifier: left.pid)?.bundleIdentifier,
+            rightBundleID: NSRunningApplication(processIdentifier: right.pid)?.bundleIdentifier
+        )
+        let initiator = initiatingSide == .left ? left : right
+        let partner = initiatingSide == .left ? right : left
+        let pickerSide: SplitSide = initiatingSide == .left ? .right : .left
+        let command = initiatingSide == .left ? "Left of Screen" : "Right of Screen"
         if let failure = placeOnAnchor([left, right], display: display, anchor: anchor) { return .failed(failure) }
         guard let liveDisplay = state.display(uuid: display) else { return .failed("display is not connected") }
-        guard let element = visibleElement(of: right) else { return .failed("no accessibility element for \(right)") }
-        raise(right, element)
+        guard let element = visibleElement(of: initiator) else { return .failed("no accessibility element for \(initiator)") }
+        raise(initiator, element)
         let ready = MissionControl.wait(timeout: 2) { () -> Bool? in
             if cancellation.isCancelled { return false }
-            return menuCommandsReady(for: right) ? true : nil
+            return menuCommandsReady(for: initiator) ? true : nil
         } == true
         if cancellation.isCancelled { return .skipped("cancelled") }
-        guard ready else { return .failed("could not focus \(right) for its Full Screen Tile command") }
+        guard ready else { return .failed("could not focus \(initiator) for its Full Screen Tile command") }
 
-        // Initiate from the right window, then choose the left partner.
-        // Some apps do not expose a window association on their picker hit.
-        guard let item = menuItem(pid: right.pid, path: [["Window"], ["Right of Screen"]]) else {
-            return .failed("\(right.appName) has no Window > Full Screen Tile > Right of Screen menu item")
+        guard let item = menuItem(pid: initiator.pid, path: [["Window"], [command]]) else {
+            return .failed("\(initiator.appName) has no Window > Full Screen Tile > \(command) menu item")
         }
         if cancellation.isCancelled {
             CGEvent.keyPress(53)
             return .skipped("cancelled")
         }
-        guard item.bool(kAXEnabledAttribute) == true, menuCommandsReady(for: right) else {
+        guard item.bool(kAXEnabledAttribute) == true, menuCommandsReady(for: initiator) else {
             CGEvent.keyPress(53)
-            return .failed("\(right.appName)'s Right of Screen command is not enabled for the requested window")
+            return .failed("\(initiator.appName)'s \(command) command is not enabled for the requested window")
         }
         if cancellation.isCancelled {
             CGEvent.keyPress(53)
             return .skipped("cancelled")
         }
-        guard item.perform(kAXPressAction) else { return .failed("pressing Right of Screen failed") }
-        guard MissionControl.wait(timeout: 4, { spaceOf(right.id)?.kind.isFullscreenLike == true ? true : nil }) != nil
-        else { return .failed("\(right) did not tile to the right") }
+        guard item.perform(kAXPressAction) else { return .failed("pressing \(command) failed") }
+        guard MissionControl.wait(timeout: 4, { spaceOf(initiator.id)?.kind.isFullscreenLike == true ? true : nil }) != nil
+        else { return .failed("\(initiator) did not tile to the \(initiatingSide.rawValue)") }
 
-        // The left half now shows a picker of other windows; its miniatures
+        // The opposite half now shows a picker of other windows; its miniatures
         // hit-test as the apps' real windows.
         Thread.sleep(forTimeInterval: 0.6)
         guard let point = MissionControl.wait(timeout: 4, interval: 0.3, {
-            pickerPoint(for: left.id, on: liveDisplay.frame, side: .left)
+            pickerPoint(for: partner.id, on: liveDisplay.frame, side: pickerSide)
         }) else {
             CGEvent.keyPress(53)  // Escape: leave the picker instead of blocking the screen
             refresh()
-            return .failed("\(left) was not offered in the Split View picker")
+            return .failed("\(partner) was not offered in the Split View picker")
         }
         CGEvent.click(at: point)
         let paired = MissionControl.wait(timeout: 5) { () -> Bool? in

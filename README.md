@@ -214,9 +214,11 @@ completed scan to discover late AX elements. If phone
 confirmation is requested, the restore must report a preparation failure
 after its bounded wait and continue restoring other apps.
 
-Restore a Split View pair with WeChat on the right. Restore starts from
-that window's Right of Screen command and selects the left partner.
-Confirm that the exact right window is foreground, main and focused
+Restore a Split View pair with WeChat on the right, then repeat with
+WeChat on the left. Restore starts from WeChat's tiling command for its
+saved side and selects the partner on the opposite half. Other pairs
+retain the left-window entry. Confirm that the exact initiating window
+is foreground, main and focused
 before its enabled menu command runs, and that WindowServer reports both
 members on their saved sides in the same Split View Space. If the pair
 does not form, the picker must close and the step must report failure.
