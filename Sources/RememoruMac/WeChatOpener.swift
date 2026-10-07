@@ -27,16 +27,19 @@ enum WeChatOpener {
         let application = AXElement.application(app.processIdentifier)
         let elements = WindowElements(probeMode: .repeatCompletedScans)
         var previousWindowIDs = Set<UInt32>()
+        var failureReason: String?
         return open(observe: { deadline in
             observation(application: application, pid: app.processIdentifier, elements: elements,
-                        previousWindowIDs: &previousWindowIDs, deadline: deadline, cancellation: cancellation)
-        }, cancellation: cancellation)
+                        previousWindowIDs: &previousWindowIDs, deadline: deadline, cancellation: cancellation,
+                        reportFailure: { failureReason = $0 })
+        }, cancellation: cancellation, failureReason: { failureReason })
     }
 
     /// Separated from AX discovery so readiness, failure and cancellation
     /// can be exercised without changing a user's account or windows.
     static func open(
         observe: (Date) -> Observation, cancellation: CancellationFlag,
+        failureReason: () -> String? = { nil },
         timeout: TimeInterval = timeout, discoveryTimeout: TimeInterval = discoveryTimeout,
         interval: TimeInterval = 0.1
     ) -> RestoreReport.Outcome? {
@@ -54,8 +57,9 @@ enum WeChatOpener {
                 if !pressed {
                     let actionDeadline = Date().addingTimeInterval(timeout)
                     guard press(actionDeadline) else {
+                        let detail = failureReason().map { ": \($0)" } ?? ""
                         return cancellation.isCancelled ? .skipped("cancelled")
-                            : .failed("could not press WeChat's Open WeChat button")
+                            : .failed("could not press WeChat's Open WeChat button\(detail)")
                     }
                     pressed = true
                     deadline = Date().addingTimeInterval(timeout)
@@ -75,7 +79,8 @@ enum WeChatOpener {
 
     private static func observation(
         application: AXElement, pid: pid_t, elements: WindowElements,
-        previousWindowIDs: inout Set<UInt32>, deadline: Date, cancellation: CancellationFlag
+        previousWindowIDs: inout Set<UInt32>, deadline: Date, cancellation: CancellationFlag,
+        reportFailure: @escaping (String) -> Void = { _ in }
     ) -> Observation {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
         guard canContinue() else { return .waiting }
@@ -97,7 +102,7 @@ enum WeChatOpener {
             inspect: { id in
                 guard let window = available[id] else { return .waiting }
                 return inspect(window: window, application: application, pid: pid, elements: elements,
-                               deadline: deadline, cancellation: cancellation)
+                               deadline: deadline, cancellation: cancellation, reportFailure: reportFailure)
             },
             deadline: deadline, cancellation: cancellation
         )
@@ -168,7 +173,7 @@ enum WeChatOpener {
 
     private static func inspect(
         window: AXElement, application: AXElement, pid: pid_t, elements: WindowElements,
-        deadline: Date, cancellation: CancellationFlag
+        deadline: Date, cancellation: CancellationFlag, reportFailure: @escaping (String) -> Void
     ) -> Observation {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
         return classify(openButton: {
@@ -176,17 +181,27 @@ enum WeChatOpener {
             else { return nil }
             return .openButton(press: { openingDeadline in
                 let canPress = { !cancellation.isCancelled && Date() < openingDeadline }
-                guard canPress(), button.bool(kAXEnabledAttribute) == true, canPress() else { return false }
+                guard canPress(), button.bool(kAXEnabledAttribute) == true, canPress() else {
+                    reportFailure(Date() >= openingDeadline ? "the startup action timed out"
+                        : "the startup button is disabled or unavailable")
+                    return false
+                }
                 if button.actionNames.contains(kAXPressAction) {
-                    guard canPress() else { return false }
-                    return button.perform(kAXPressAction)
+                    guard canPress() else {
+                        reportFailure(Date() >= openingDeadline ? "the startup action timed out"
+                            : "the startup action was cancelled")
+                        return false
+                    }
+                    let pressed = button.perform(kAXPressAction)
+                    if !pressed { reportFailure("WeChat rejected the accessibility press action") }
+                    return pressed
                 }
                 // This button can advertise only AXRaise. When AXPress
                 // is not offered, click its verified hit target.
                 var currentIDs = Set<UInt32>()
                 return WeChatStartupClick.click(
                     button: button, window: window, application: application, pid: pid,
-                    deadline: openingDeadline, cancellation: cancellation, isReady: {
+                    deadline: openingDeadline, cancellation: cancellation, reportFailure: reportFailure, isReady: {
                         let current = observation(
                             application: application, pid: pid, elements: elements,
                             previousWindowIDs: &currentIDs, deadline: openingDeadline, cancellation: cancellation

@@ -9,28 +9,29 @@ final class WeChatStartupTests: XCTestCase {
         ])
     }
 
-    func testPreparesSavedWeChatWhenOpeningAppsIsEnabled() {
-        var options = RestoreOptions()
-        options.launchApps = true
-
+    func testPreparesOnlySavedWeChat() {
         XCTAssertTrue(WeChatStartup.shouldPrepare(
-            snapshot: snapshot(bundleID: "com.tencent.xinWeChat"), options: options, mode: .apply
+            snapshot: snapshot(bundleID: "com.tencent.xinWeChat"), mode: .apply
         ))
         XCTAssertFalse(WeChatStartup.shouldPrepare(
-            snapshot: snapshot(bundleID: "com.other.WeChat"), options: options, mode: .apply
+            snapshot: snapshot(bundleID: "com.other.WeChat"), mode: .apply
         ))
         XCTAssertFalse(WeChatStartup.shouldPrepare(
-            snapshot: snapshot(bundleID: nil), options: options, mode: .apply
+            snapshot: snapshot(bundleID: nil), mode: .apply
         ))
     }
 
-    func testDoesNotPrepareDuringDryRunOrWhenOpeningAppsIsDisabled() {
+    func testDoesNotPrepareDuringDryRun() {
         let saved = snapshot(bundleID: "com.tencent.xinWeChat")
-        var options = RestoreOptions()
-        XCTAssertFalse(WeChatStartup.shouldPrepare(snapshot: saved, options: options, mode: .apply))
+        XCTAssertFalse(WeChatStartup.shouldPrepare(snapshot: saved, mode: .dryRun))
+    }
 
-        options.launchApps = true
-        XCTAssertFalse(WeChatStartup.shouldPrepare(snapshot: saved, options: options, mode: .dryRun))
+    func testPreparesSavedWeChatWhenLaunchingMissingAppsIsDisabled() {
+        let options = RestoreOptions()
+        XCTAssertFalse(options.launchApps)
+        XCTAssertTrue(WeChatStartup.shouldPrepare(
+            snapshot: snapshot(bundleID: "com.tencent.xinWeChat"), mode: .apply
+        ))
     }
 
     func testRecognizesOnlyTheExactOpenButton() {
