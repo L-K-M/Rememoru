@@ -87,6 +87,16 @@ final class WeChatOpenerTests: XCTestCase {
         XCTAssertEqual(probes, 1)
     }
 
+    func testFailedPressIncludesTheSpecificGuardFailure() {
+        let reason = "the startup button is outside its visible window"
+        let result = WeChatOpener.open(
+            observe: { _ in .openButton(press: { _ in false }) }, cancellation: CancellationFlag(),
+            failureReason: { reason }
+        )
+
+        XCTAssertEqual(result, .failed("could not press WeChat's Open WeChat button: \(reason)"))
+    }
+
     func testPhoneConfirmationOrTimeoutIsAReportedFailure() {
         var presses = 0
         let result = WeChatOpener.open(

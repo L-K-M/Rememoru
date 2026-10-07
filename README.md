@@ -46,12 +46,15 @@ Click the menu bar icon:
   can reopen their windows, then restores the newest snapshot.
 - **Open Apps That Aren't Running** (on by default) launches apps that
   had saved windows before matching, and waits up to 20 s for their
-  windows. For a saved WeChat layout, it also presses **Open WeChat** on
-  the account startup panel, even if WeChat is already running, and waits
-  up to 20 s for the main window before matching. Phone confirmation, if
-  requested, still needs you.
+  windows.
 - **Show Log** opens `~/Library/Logs/Rememoru/rememoru.log`, which lists
   every step of every restore and whether it worked.
+
+If a saved layout includes WeChat and it is already running at its account
+startup panel, restoring presses **Open WeChat** and waits up to 20 s for
+the main window before matching. This also applies when **Open Apps That
+Aren't Running** is disabled. Phone confirmation, if requested, still
+needs you.
 
 **Screen Recording** permission is optional. Rememoru reads window titles
 through Accessibility. With Screen Recording it can also read the titles
@@ -177,15 +180,23 @@ the final Space must also match before the switch is reported successful.
 This checks display routing and multiple hops, which cannot be verified
 by constructing an event alone.
 
+Open Mission Control before restoring a saved frame. Confirm that restore
+closes it before reading windows, and that WindowServer reports the full
+window bounds rather than thumbnail bounds. Repeat with a Space switch
+during restore. A confirmed active Space is insufficient while Mission
+Control remains open; an unconfirmed closure must stop the window action.
+
 To verify WeChat startup handling on a test Mac, save a layout with its
 main window open, then quit and reopen WeChat until the **Open WeChat**
-panel appears. With **Open Apps That Aren't Running** enabled, restore
-the saved layout. Confirm that the button is pressed once, the main
+panel appears. Restore the saved layout with **Open Apps That Aren't
+Running** enabled, then repeat with it disabled. Confirm in both runs
+that the button is pressed once, the main
 window replaces the panel, and the log records that opening succeeded
 before any WeChat frame or Split View step. Repeat with WeChat's main
-window already open (including on another Space or in fullscreen), with
-the option disabled, and with `restore --dry-run --launch`;
-those runs must not press the button. Also leave the startup panel on an
+window already open (including on another Space or in fullscreen) and
+with `restore --dry-run --launch`; those runs must not press the button.
+Quit WeChat and disable the option: restoring must not launch it.
+Also leave the startup panel on an
 inactive Space before restoring: its remote accessibility window must be
 found, and the new main window must replace it before matching. The
 startup panel can expose a minimize button; confirm that it is still
@@ -202,6 +213,13 @@ window. Remote probing must resume across its bounded scans and repeat a
 completed scan to discover late AX elements. If phone
 confirmation is requested, the restore must report a preparation failure
 after its bounded wait and continue restoring other apps.
+
+Restore a Split View pair with WeChat on the right. Restore starts from
+that window's Right of Screen command and selects the left partner.
+Confirm that the exact right window is foreground, main and focused
+before its enabled menu command runs, and that WindowServer reports both
+members on their saved sides in the same Split View Space. If the pair
+does not form, the picker must close and the step must report failure.
 
 For a cross-display frame check, save a window on an external display,
 move it to a smaller display, and restore. Confirm that the desktop move

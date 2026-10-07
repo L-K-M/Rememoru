@@ -39,10 +39,22 @@ final class Restorer {
             return report
         }
 
+        // Mission Control publishes thumbnail bounds and can hide AX
+        // windows. Close it before reading the state used for matching.
+        if mode == .apply, !MissionControl.close(canContinue: { !self.cancellation.isCancelled }) {
+            if cancellation.isCancelled {
+                report.cancelled = true
+            } else {
+                report.fatalError = "Could not confirm Mission Control is closed; retry the restore"
+            }
+            log(report.summary)
+            return report
+        }
+
         if options.launchApps {
             launchMissingApps()
         }
-        if WeChatStartup.shouldPrepare(snapshot: snapshot, options: options, mode: mode) {
+        if WeChatStartup.shouldPrepare(snapshot: snapshot, mode: mode) {
             progress("Opening WeChat…")
             if let outcome = WeChatOpener.openIfNeeded(cancellation: cancellation) {
                 log("→ \(RestoreStep.openWeChat)")
@@ -133,6 +145,12 @@ final class Restorer {
     // MARK: - Steps
 
     private func execute(_ step: RestoreStep) -> RestoreReport.Outcome {
+        // A preceding desktop operation can leave Mission Control open
+        // if dismissal failed. Never apply the next window action there.
+        guard MissionControl.close(canContinue: { !self.cancellation.isCancelled }) else {
+            return cancellation.isCancelled ? .skipped("cancelled")
+                : .failed("Could not confirm Mission Control is closed; retry the restore")
+        }
         switch step {
         case .openWeChat:
             return WeChatOpener.openIfNeeded(cancellation: cancellation) ?? .skipped("no startup panel")
@@ -234,8 +252,10 @@ final class Restorer {
         // Moves into a desktop that was never shown are reported to fail
         // (yabai #2789); showing it first is the retry.
         log("  move not confirmed; showing the target desktop and retrying")
-        if let liveDisplay = state.display(uuid: display) {
-            _ = SpaceSwitcher.show(spaceID: target.id, display: liveDisplay, readSpaces: { SkyLight.managedSpaces().spaces })
+        guard let liveDisplay = state.display(uuid: display) else { return .failed("display is not connected") }
+        guard SpaceSwitcher.show(spaceID: target.id, display: liveDisplay,
+                                 readSpaces: { SkyLight.managedSpaces().spaces }) != nil else {
+            return .failed("could not show the target desktop")
         }
         let moved = submitAndConfirm(timeout: 2)
         refresh()
@@ -281,33 +301,52 @@ final class Restorer {
     private func splitView(left: WindowTarget, right: WindowTarget, display: String, anchor: Int) -> RestoreReport.Outcome {
         if let failure = placeOnAnchor([left, right], display: display, anchor: anchor) { return .failed(failure) }
         guard let liveDisplay = state.display(uuid: display) else { return .failed("display is not connected") }
-        guard let element = visibleElement(of: left) else { return .failed("no accessibility element for \(left)") }
-        raise(left, element)
+        guard let element = visibleElement(of: right) else { return .failed("no accessibility element for \(right)") }
+        raise(right, element)
+        let ready = MissionControl.wait(timeout: 2) { () -> Bool? in
+            if cancellation.isCancelled { return false }
+            return menuCommandsReady(for: right) ? true : nil
+        } == true
+        if cancellation.isCancelled { return .skipped("cancelled") }
+        guard ready else { return .failed("could not focus \(right) for its Full Screen Tile command") }
 
-        // macOS 15/26 put "Full Screen Tile > Left of Screen" in the Window
-        // menu of apps with a standard Window menu (English titles only).
-        guard let item = menuItem(pid: left.pid, path: [["Window"], ["Left of Screen"]]) else {
-            return .failed("\(left.appName) has no Window > Full Screen Tile > Left of Screen menu item")
+        // Initiate from the right window, then choose the left partner.
+        // Some apps do not expose a window association on their picker hit.
+        guard let item = menuItem(pid: right.pid, path: [["Window"], ["Right of Screen"]]) else {
+            return .failed("\(right.appName) has no Window > Full Screen Tile > Right of Screen menu item")
         }
-        guard item.perform(kAXPressAction) else { return .failed("pressing Left of Screen failed") }
-        guard MissionControl.wait(timeout: 4, { spaceOf(left.id)?.kind.isFullscreenLike == true ? true : nil }) != nil
-        else { return .failed("\(left) did not tile to the left") }
+        if cancellation.isCancelled {
+            CGEvent.keyPress(53)
+            return .skipped("cancelled")
+        }
+        guard item.bool(kAXEnabledAttribute) == true, menuCommandsReady(for: right) else {
+            CGEvent.keyPress(53)
+            return .failed("\(right.appName)'s Right of Screen command is not enabled for the requested window")
+        }
+        if cancellation.isCancelled {
+            CGEvent.keyPress(53)
+            return .skipped("cancelled")
+        }
+        guard item.perform(kAXPressAction) else { return .failed("pressing Right of Screen failed") }
+        guard MissionControl.wait(timeout: 4, { spaceOf(right.id)?.kind.isFullscreenLike == true ? true : nil }) != nil
+        else { return .failed("\(right) did not tile to the right") }
 
-        // The right half now shows a picker of other windows; its miniatures
+        // The left half now shows a picker of other windows; its miniatures
         // hit-test as the apps' real windows.
         Thread.sleep(forTimeInterval: 0.6)
         guard let point = MissionControl.wait(timeout: 4, interval: 0.3, {
-            pickerPoint(for: right.id, on: liveDisplay.frame)
+            pickerPoint(for: left.id, on: liveDisplay.frame, side: .left)
         }) else {
             CGEvent.keyPress(53)  // Escape: leave the picker instead of blocking the screen
             refresh()
-            return .failed("\(right) was not offered in the Split View picker")
+            return .failed("\(left) was not offered in the Split View picker")
         }
         CGEvent.click(at: point)
         let paired = MissionControl.wait(timeout: 5) { () -> Bool? in
             guard let space = spaceOf(left.id), space.kind == .splitView else { return nil }
             return spaceOf(right.id)?.id == space.id ? true : nil
         } != nil
+        if !paired { CGEvent.keyPress(53) }
         Thread.sleep(forTimeInterval: 0.8)
         refresh()
         return paired ? .done : .failed("the Split View pair did not form")
@@ -437,7 +476,8 @@ final class Restorer {
     /// Shows the window's Space if needed, then returns its element.
     private func visibleElement(of window: WindowTarget) -> AXElement? {
         if let space = spaceOf(window.id), !space.isActive, let display = state.display(uuid: space.displayUUID) {
-            _ = SpaceSwitcher.show(spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces })
+            guard SpaceSwitcher.show(spaceID: space.id, display: display,
+                                     readSpaces: { SkyLight.managedSpaces().spaces }) != nil else { return nil }
             reader.elements.invalidate()
         }
         return element(of: window)
@@ -481,6 +521,16 @@ final class Restorer {
         Thread.sleep(forTimeInterval: 0.3)
     }
 
+    private func menuCommandsReady(for window: WindowTarget) -> Bool {
+        let application = AXElement.application(window.pid)
+        return WindowCommandReadiness.permits(
+            targetWindowID: window.id,
+            isFrontmost: application.bool(kAXFrontmostAttribute),
+            mainWindowID: application.element(kAXMainWindowAttribute)?.windowID,
+            focusedWindowID: application.element(kAXFocusedWindowAttribute)?.windowID
+        )
+    }
+
     /// Finds a menu item by title path; each level lists accepted titles
     /// and may sit a few menus below the previous one. Some items (the
     /// system's tiling entries) only exist once their menu has opened, so
@@ -517,12 +567,12 @@ final class Restorer {
         return nil
     }
 
-    /// Grid-searches the right half of a display for a point whose element
+    /// Grid-searches one half of a display for a point whose element
     /// belongs to the wanted window (SplitView.spoon's technique).
-    private func pickerPoint(for windowID: UInt32, on frame: Rect) -> CGPoint? {
+    private func pickerPoint(for windowID: UInt32, on frame: Rect, side: SplitSide) -> CGPoint? {
         let columns = 8
         let rows = 6
-        let half = Rect(x: frame.x + frame.w / 2, y: frame.y, w: frame.w / 2, h: frame.h)
+        let half = Rect(x: frame.x + (side == .right ? frame.w / 2 : 0), y: frame.y, w: frame.w / 2, h: frame.h)
         for row in 0..<rows {
             for column in 0..<columns {
                 let point = CGPoint(x: half.x + (Double(column) + 0.5) * half.w / Double(columns),

@@ -22,6 +22,7 @@ enum SpaceSwitcher {
     static func show(
         spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace],
         canContinue: @escaping () -> Bool = { true },
+        ensureMissionControlClosed: (() -> Bool)? = nil,
         showMissionControl: (UInt32, () -> Int?) -> Bool = { MissionControl.showSpace(display: $0, index: $1) }
     ) -> Method? {
         guard canContinue() else { return nil }
@@ -30,8 +31,15 @@ enum SpaceSwitcher {
             return readSpaces().filter { $0.displayUUID == display.uuid }.sorted { $0.index < $1.index }
         }
         func isShown() -> Bool { current().first { $0.isActive }?.id == spaceID }
+        let closeMissionControl = ensureMissionControlClosed ?? { MissionControl.close(canContinue: canContinue) }
+        func finished(_ method: Method) -> Method? {
+            // Active-Space state can update while Mission Control still
+            // exposes thumbnail bounds. Window mutations require it closed.
+            guard canContinue(), closeMissionControl(), canContinue(), isShown(), canContinue() else { return nil }
+            return method
+        }
 
-        if isShown() { return canContinue() ? .alreadyShown : nil }
+        if isShown() { return finished(.alreadyShown) }
         let initial = current()
         guard canContinue(), initial.contains(where: { $0.id == spaceID }) else { return nil }
 
@@ -44,7 +52,7 @@ enum SpaceSwitcher {
             let spaces = current()
             guard let target = spaces.firstIndex(where: { $0.id == spaceID }),
                   let active = spaces.firstIndex(where: \.isActive) else { break }
-            if active == target { return canContinue() ? .gesture : nil }
+            if active == target { return finished(.gesture) }
             let previousID = spaces[active].id
             guard canContinue() else { return nil }
             swipe(steps: target > active ? 1 : -1, on: display)
@@ -56,7 +64,7 @@ enum SpaceSwitcher {
             }) == true else { break }
         }
         guard canContinue() else { return nil }
-        if isShown() { return canContinue() ? .gesture : nil }
+        if isShown() { return finished(.gesture) }
         guard canContinue() else { return nil }
         if showMissionControl(display.id, {
             current().firstIndex(where: { $0.id == spaceID })
@@ -65,12 +73,12 @@ enum SpaceSwitcher {
                guard canContinue() else { return false }
                return isShown() ? true : nil
            }) == true {
-            return canContinue() ? .missionControl : nil
+            return finished(.missionControl)
         }
-        // A thumbnail press can change the Space even when waiting for
-        // Mission Control's accessibility tree to close times out.
+        // A thumbnail press can change the Space even when its initial
+        // closing wait times out. Retry closure before reporting success.
         guard canContinue(), isShown(), canContinue() else { return nil }
-        return .missionControl
+        return finished(.missionControl)
     }
 
     /// Posts `abs(steps)` Dock-swipe gestures on a display; negative steps

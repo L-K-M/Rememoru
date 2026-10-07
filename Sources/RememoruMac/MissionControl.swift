@@ -29,6 +29,12 @@ enum MissionControl {
 
     static var isOpen: Bool { group != nil }
 
+    /// A failed Dock AX read must not look like confirmed closure.
+    private static var openState: Bool? {
+        guard let children = dock?.elementsIfAvailable(kAXChildrenAttribute) else { return nil }
+        return children.contains { $0.identifier == "mc" }
+    }
+
     /// Opens Mission Control and waits for its accessibility tree.
     static func open(timeout: TimeInterval = 3) -> AXElement? {
         if let group { return group }
@@ -36,10 +42,31 @@ enum MissionControl {
         return wait(timeout: timeout) { group }
     }
 
-    static func close() {
-        guard isOpen else { return }
-        toggle()
-        _ = wait(timeout: 2) { isOpen ? nil : true }
+    @discardableResult
+    static func close(canContinue: () -> Bool = { true }) -> Bool {
+        closeIfNeeded(
+            isOpen: { openState }, dismiss: toggle, canContinue: canContinue,
+            waitUntilClosed: {
+                wait(timeout: 2) { () -> Bool? in
+                    guard canContinue(), let open = openState else { return false }
+                    return open ? nil : true
+                } == true
+            }
+        )
+    }
+
+    /// A toggle is safe only after confirming Mission Control is open.
+    /// Keep the confirmation boundary injectable without posting UI events.
+    static func closeIfNeeded(
+        isOpen: () -> Bool?, dismiss: () -> Void, canContinue: () -> Bool,
+        waitUntilClosed: () -> Bool
+    ) -> Bool {
+        guard canContinue(), let open = isOpen() else { return false }
+        guard open else { return canContinue() }
+        guard canContinue() else { return false }
+        dismiss()
+        guard canContinue() else { return false }
+        return waitUntilClosed() && canContinue()
     }
 
     private static func toggle() {

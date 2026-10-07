@@ -4,8 +4,9 @@ import Foundation
 public enum WeChatStartup {
     public static let bundleID = "com.tencent.xinWeChat"
 
-    public static func shouldPrepare(snapshot: Snapshot, options: RestoreOptions, mode: RestoreMode) -> Bool {
-        mode == .apply && options.launchApps && snapshot.windows.contains { $0.bundleID == bundleID }
+    /// Readiness of an already running app is independent of launching missing apps.
+    public static func shouldPrepare(snapshot: Snapshot, mode: RestoreMode) -> Bool {
+        mode == .apply && snapshot.windows.contains { $0.bundleID == bundleID }
     }
 
     /// Match a specific action, never account switching or phone approval.

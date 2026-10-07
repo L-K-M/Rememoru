@@ -19,6 +19,7 @@ final class SpaceSwitcherTests: XCTestCase {
         var target = LiveSpace(id: 42, key: "target", kind: .fullscreen, displayUUID: "D", index: 0, isActive: false)
 
         let method = SpaceSwitcher.show(spaceID: target.id, display: display, readSpaces: { [target] },
+                                        ensureMissionControlClosed: { true },
                                         showMissionControl: { _, index in
             XCTAssertEqual(index(), 0)
             target.isActive = true
@@ -26,6 +27,49 @@ final class SpaceSwitcherTests: XCTestCase {
         })
 
         XCTAssertEqual(method, .missionControl, "WindowServer confirmation must outlive Mission Control's closing timeout")
+    }
+
+    func testShownSpaceCannotSucceedWhileMissionControlRemainsOpen() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let target = LiveSpace(id: 42, key: "target", kind: .desktop, displayUUID: "D", index: 0, isActive: true)
+        var closeRequests = 0
+
+        let method = SpaceSwitcher.show(
+            spaceID: target.id, display: display, readSpaces: { [target] },
+            ensureMissionControlClosed: { closeRequests += 1; return false }
+        )
+
+        XCTAssertNil(method, "an active Space still has thumbnail bounds until Mission Control closes")
+        XCTAssertEqual(closeRequests, 1)
+    }
+
+    func testFallbackCannotSucceedWhenMissionControlRemainsOpen() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        var target = LiveSpace(id: 42, key: "target", kind: .desktop, displayUUID: "D", index: 0, isActive: false)
+        var closeRequests = 0
+
+        let method = SpaceSwitcher.show(
+            spaceID: target.id, display: display, readSpaces: { [target] },
+            ensureMissionControlClosed: { closeRequests += 1; return false },
+            showMissionControl: { _, _ in target.isActive = true; return false }
+        )
+
+        XCTAssertNil(method)
+        XCTAssertEqual(closeRequests, 1)
+    }
+
+    func testCancellationDuringMissionControlClosePreventsSuccess() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let target = LiveSpace(id: 42, key: "target", kind: .desktop, displayUUID: "D", index: 0, isActive: true)
+        var allowed = true
+
+        let method = SpaceSwitcher.show(
+            spaceID: target.id, display: display, readSpaces: { [target] },
+            canContinue: { allowed },
+            ensureMissionControlClosed: { allowed = false; return true }
+        )
+
+        XCTAssertNil(method)
     }
 
     func testCancelledShowDoesNotReadOrDispatchMissionControl() {
