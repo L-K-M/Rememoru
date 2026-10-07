@@ -333,9 +333,16 @@ final class Restorer {
             CGEvent.keyPress(53)
             return .skipped("cancelled")
         }
-        guard item.perform(kAXPressAction) else { return .failed("pressing \(command) failed") }
+        guard item.perform(kAXPressAction) else {
+            CGEvent.keyPress(53)
+            return .failed("pressing \(command) failed")
+        }
         guard MissionControl.wait(timeout: 4, { spaceOf(initiator.id)?.kind.isFullscreenLike == true ? true : nil }) != nil
-        else { return .failed("\(initiator) did not tile to the \(initiatingSide.rawValue)") }
+        else {
+            CGEvent.keyPress(53)
+            refresh()
+            return .failed("\(initiator) did not tile to the \(initiatingSide.rawValue)")
+        }
 
         // The opposite half now shows a picker of other windows; its miniatures
         // hit-test as the apps' real windows.

@@ -47,9 +47,8 @@ enum MissionControl {
         closeIfNeeded(
             isOpen: { openState }, dismiss: toggle, canContinue: canContinue,
             waitUntilClosed: {
-                wait(timeout: 2) { () -> Bool? in
-                    guard canContinue(), let open = openState else { return false }
-                    return open ? nil : true
+                wait(timeout: 2) {
+                    closureConfirmation(isOpen: { openState }, canContinue: canContinue)
                 } == true
             }
         )
@@ -67,6 +66,14 @@ enum MissionControl {
         dismiss()
         guard canContinue() else { return false }
         return waitUntilClosed() && canContinue()
+    }
+
+    static func closureConfirmation(isOpen: () -> Bool?, canContinue: () -> Bool) -> Bool? {
+        guard canContinue() else { return false }
+        // Dismissal can briefly invalidate Dock's AX tree. Keep waiting
+        // within the closing deadline until absence is confirmed.
+        guard let open = isOpen() else { return nil }
+        return open ? nil : true
     }
 
     private static func toggle() {

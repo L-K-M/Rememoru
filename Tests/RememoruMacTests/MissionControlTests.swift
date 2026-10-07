@@ -41,6 +41,36 @@ final class MissionControlTests: XCTestCase {
         XCTAssertEqual(waits, 0)
     }
 
+    func testDismissalWaitRetriesUnavailableStateUntilExplicitClosure() {
+        let states: [Bool?] = [nil, false]
+        var reads = 0
+        let confirmed = MissionControl.wait(timeout: 0.1, interval: 0) {
+            MissionControl.closureConfirmation(isOpen: {
+                let state = states[min(reads, states.count - 1)]
+                reads += 1
+                return state
+            }, canContinue: { true })
+        }
+
+        XCTAssertEqual(confirmed, true)
+        XCTAssertEqual(reads, 2)
+    }
+
+    func testCancelledDismissalWaitDoesNotReadState() {
+        XCTAssertEqual(MissionControl.closureConfirmation(
+            isOpen: { XCTFail("cancelled closure must not read state"); return nil },
+            canContinue: { false }
+        ), false)
+    }
+
+    func testUnavailableDismissalStateStaysUnconfirmedAtDeadline() {
+        let confirmed = MissionControl.wait(timeout: 0) {
+            MissionControl.closureConfirmation(isOpen: { nil }, canContinue: { true })
+        }
+
+        XCTAssertNil(confirmed)
+    }
+
     func testCancellationPreventsReadsAndDismissal() {
         XCTAssertFalse(MissionControl.closeIfNeeded(
             isOpen: { XCTFail("cancelled closure must not read state"); return true },

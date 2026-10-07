@@ -26,7 +26,7 @@ final class WeChatStartupTests: XCTestCase {
         XCTAssertFalse(WeChatStartup.shouldPrepare(snapshot: saved, mode: .dryRun))
     }
 
-    func testPreparesRunningWeChatWhenLaunchingMissingAppsIsDisabled() {
+    func testPreparesSavedWeChatWhenLaunchingMissingAppsIsDisabled() {
         let options = RestoreOptions()
         XCTAssertFalse(options.launchApps)
         XCTAssertTrue(WeChatStartup.shouldPrepare(

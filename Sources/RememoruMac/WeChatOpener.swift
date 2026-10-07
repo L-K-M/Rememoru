@@ -182,11 +182,16 @@ enum WeChatOpener {
             return .openButton(press: { openingDeadline in
                 let canPress = { !cancellation.isCancelled && Date() < openingDeadline }
                 guard canPress(), button.bool(kAXEnabledAttribute) == true, canPress() else {
-                    reportFailure("the startup button is disabled or unavailable")
+                    reportFailure(Date() >= openingDeadline ? "the startup action timed out"
+                        : "the startup button is disabled or unavailable")
                     return false
                 }
                 if button.actionNames.contains(kAXPressAction) {
-                    guard canPress() else { return false }
+                    guard canPress() else {
+                        reportFailure(Date() >= openingDeadline ? "the startup action timed out"
+                            : "the startup action was cancelled")
+                        return false
+                    }
                     let pressed = button.perform(kAXPressAction)
                     if !pressed { reportFailure("WeChat rejected the accessibility press action") }
                     return pressed

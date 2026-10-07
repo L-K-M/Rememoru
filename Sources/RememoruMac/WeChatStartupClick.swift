@@ -83,6 +83,7 @@ enum WeChatStartupClick {
         let isButton = button.role == kAXButtonRole
         guard canContinue() else { return fail("the startup action was cancelled") }
         let isEnabled = button.bool(kAXEnabledAttribute) == true
+        guard canContinue() else { return fail("the startup action was cancelled") }
         let frontmost = isFrontmost(pid)
         let hitMatches = hitMatches(button: button, at: point, canContinue: canContinue)
         guard canContinue(), WeChatStartup.canClickOpenButton(

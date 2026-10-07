@@ -222,6 +222,12 @@ is foreground, main and focused
 before its enabled menu command runs, and that WindowServer reports both
 members on their saved sides in the same Split View Space. If the pair
 does not form, the picker must close and the step must report failure.
+For failure-path checks in a temporary debug build, force the tile command
+to fail or the subsequent Space query to stay unknown. Confirm that the
+menu or picker closes before the step reports failure. For startup timeout
+diagnostics, delay the button's AX read past the action deadline; the
+failure should name the timeout and must not post a click. These injected
+UI failures require a manual check on the test Mac.
 
 For a cross-display frame check, save a window on an external display,
 move it to a smaller display, and restore. Confirm that the desktop move
