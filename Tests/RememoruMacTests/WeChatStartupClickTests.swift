@@ -40,10 +40,13 @@ final class WeChatStartupClickTests: XCTestCase {
 
     func testCancellationDuringLookupPreventsConfirmation() {
         var allowed = true
+        var probes = 0
         XCTAssertFalse(WeChatStartupClick.waitForHit(timeout: 1, canContinue: { allowed }) {
+            probes += 1
             allowed = false
             return true
         })
+        XCTAssertEqual(probes, 1)
     }
 
     func testCancellationAfterMissStopsRetrying() {

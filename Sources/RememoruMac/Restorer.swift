@@ -9,13 +9,29 @@ enum RetainedWindowVerification {
         initialState: LiveState, savedWindows: [WindowRecord],
         candidates: (LiveState, [Int: WindowMatch]) -> [UInt64: [LiveWindow]],
         showSpace: (LiveSpace, LiveDisplay) -> Bool,
+        restoreSpace: (LiveSpace, LiveDisplay) -> Bool, readSpaces: () -> [LiveSpace],
         readState: () -> LiveState, canContinue: () -> Bool,
-        verificationUnavailable: (UInt64) -> Void
+        verificationUnavailable: (UInt64) -> Void,
+        returnUnavailable: (LiveSpace, LiveDisplay) -> Void
     ) -> LiveState {
         var state = initialState
         var checkedSpaces = Set<UInt64>()
         var excludedIDs = Set<UInt32>()
         var unverifiedWindows: [UInt32: LiveWindow] = [:]
+        let originalSpaces = Dictionary(initialState.spaces.filter { $0.isActive && $0.kind.isRestorable }
+            .map { ($0.displayUUID, $0) }, uniquingKeysWith: { original, _ in original })
+        var touchedDisplays = Set<String>()
+
+        func preservingVerification(_ freshState: LiveState) -> LiveState {
+            var fresh = freshState
+            let presentIDs = Set(fresh.windows.map(\.id))
+            fresh.windows.removeAll { excludedIDs.contains($0.id) }
+            for window in unverifiedWindows.values.sorted(by: { $0.id < $1.id })
+                where !presentIDs.contains(window.id) && !excludedIDs.contains(window.id) {
+                fresh.windows.append(window)
+            }
+            return fresh
+        }
 
         while canContinue() {
             let matches = WindowMatcher.match(savedWindows, to: state.windows)
@@ -24,14 +40,21 @@ enum RetainedWindowVerification {
                   let windows = groups[spaceID] else { break }
             checkedSpaces.insert(spaceID)
 
-            guard let space = state.space(id: spaceID), let display = state.display(uuid: space.displayUUID),
-                  showSpace(space, display) else {
+            var shown = false
+            if let space = state.space(id: spaceID), let display = state.display(uuid: space.displayUUID),
+               originalSpaces[display.uuid] != nil {
+                // An unsuccessful or canceled show can still change the
+                // active Space. Record its display before requesting it.
+                touchedDisplays.insert(display.uuid)
+                shown = showSpace(space, display)
+            }
+            guard shown else {
                 for window in windows { unverifiedWindows[window.id] = window }
                 if canContinue() { verificationUnavailable(spaceID) }
                 continue
             }
             guard canContinue() else { break }
-            var fresh = readState()
+            let fresh = readState()
             guard canContinue() else { break }
 
             let presentIDs = Set(fresh.windows.map(\.id))
@@ -49,13 +72,32 @@ enum RetainedWindowVerification {
 
             // Later reads can see a retained surface again once its Space
             // is inactive. Keep confirmed exclusions across every rematch.
-            fresh.windows.removeAll { excludedIDs.contains($0.id) }
-            for window in unverifiedWindows.values.sorted(by: { $0.id < $1.id })
-                where !presentIDs.contains(window.id) && !excludedIDs.contains(window.id) {
-                fresh.windows.append(window)
-            }
-            state = fresh
+            state = preservingVerification(fresh)
         }
+
+        var attemptedReturn = false
+        for display in initialState.displays where touchedDisplays.contains(display.uuid) {
+            guard let original = originalSpaces[display.uuid] else { continue }
+            let active = readSpaces().first { $0.displayUUID == display.uuid && $0.isActive }
+            attemptedReturn = attemptedReturn || active?.id != original.id
+            // Even an unchanged Space needs confirmed Mission Control
+            // closure after an unsuccessful inspection request.
+            guard restoreSpace(original, display),
+                  readSpaces().contains(where: {
+                      $0.displayUUID == display.uuid && $0.id == original.id && $0.isActive
+                  }) else {
+                returnUnavailable(original, display)
+                continue
+            }
+        }
+        if attemptedReturn, canContinue() {
+            // Returning to an inactive Space makes rejected backing surfaces
+            // visible to a CG read again. Keep both exclusions and uncertainty.
+            state = preservingVerification(readState())
+        }
+        // Cancellation must still restore Spaces, without another slow AX
+        // pass. The caller stops before using the window state for a plan.
+        state.spaces = readSpaces()
         return state
     }
 }
@@ -136,7 +178,12 @@ final class Restorer {
             if let pointer { CGWarpMouseCursorPosition(pointer) }
         }
         if mode == .apply {
-            verifyMatchedWindows(excludingBundleIDs: excludedBundleIDs)
+            if let failure = verifyMatchedWindows(excludingBundleIDs: excludedBundleIDs) {
+                report.fatalError = failure
+                report.cancelled = cancellation.isCancelled
+                log(report.summary)
+                return report
+            }
         }
         if cancellation.isCancelled {
             report.cancelled = true
@@ -535,7 +582,9 @@ final class Restorer {
 
     /// An omitted match on another Space can be real or retained. Inspect
     /// only matched windows whose saved display can actually be restored.
-    private func verifyMatchedWindows(excludingBundleIDs: Set<String>) {
+    private func verifyMatchedWindows(excludingBundleIDs: Set<String>) -> String? {
+        var returnFailure: String?
+        var cleanupDeadline: Date?
         state = RetainedWindowVerification.run(
             initialState: state, savedWindows: snapshot.windows,
             candidates: verificationCandidates,
@@ -547,6 +596,17 @@ final class Restorer {
                     canContinue: { !self.cancellation.isCancelled }
                 ) != nil
             },
+            restoreSpace: { space, display in
+                // Cleanup is independent of cancellation. Its deadline stops
+                // new operations; in-flight AX calls retain their own timeout.
+                let deadline = cleanupDeadline ?? Date().addingTimeInterval(5)
+                cleanupDeadline = deadline
+                return SpaceSwitcher.show(
+                    spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces },
+                    canContinue: { Date() < deadline }
+                ) != nil
+            },
+            readSpaces: { SkyLight.managedSpaces().spaces },
             readState: {
                 var live = self.reader.read()
                 // Failed startup preparation must remain excluded after
@@ -555,9 +615,16 @@ final class Restorer {
                 return live
             },
             canContinue: { !self.cancellation.isCancelled },
-            verificationUnavailable: { self.log("could not verify windows on Space \($0); keeping their matches") }
+            verificationUnavailable: { self.log("could not verify windows on Space \($0); keeping their matches") },
+            returnUnavailable: { space, display in
+                self.log("could not return to original Space \(space.id) on display \(display.uuid.prefix(8))")
+                if returnFailure == nil {
+                    returnFailure = "Could not return to the original Space on display \(display.uuid.prefix(8)); switch back and retry the restore"
+                }
+            }
         )
         matches = WindowMatcher.match(snapshot.windows, to: state.windows)
+        return returnFailure
     }
 
     private func verificationCandidates(

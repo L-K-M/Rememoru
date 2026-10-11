@@ -50,8 +50,18 @@ final class RetainedWindowVerificationTests: XCTestCase {
         let result = RetainedWindowVerification.run(
             initialState: initial, savedWindows: saved([first, second]),
             candidates: candidates, showSpace: { space, _ in shown.append(space.id); return true },
-            readState: { defer { readIndex += 1 }; return reads[readIndex] },
-            canContinue: { true }, verificationUnavailable: { _ in XCTFail("verification should succeed") }
+            restoreSpace: { _, _ in true },
+            readSpaces: { initial.spaces },
+            readState: {
+                defer { readIndex += 1 }
+                guard readIndex < reads.count else {
+                    XCTFail("unexpected verification read")
+                    return initial
+                }
+                return reads[readIndex]
+            },
+            canContinue: { true }, verificationUnavailable: { _ in XCTFail("verification should succeed") },
+            returnUnavailable: { _, _ in XCTFail("return should succeed") }
         )
 
         XCTAssertEqual(shown, [1, 2])
@@ -67,8 +77,11 @@ final class RetainedWindowVerificationTests: XCTestCase {
         let result = RetainedWindowVerification.run(
             initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
             showSpace: { space, _ in shown.append(space.id); return false },
+            restoreSpace: { _, _ in true },
+            readSpaces: { initial.spaces },
             readState: { XCTFail("failed Space show must not read verification state"); return initial },
-            canContinue: { true }, verificationUnavailable: { unavailable.append($0) }
+            canContinue: { true }, verificationUnavailable: { unavailable.append($0) },
+            returnUnavailable: { _, _ in XCTFail("return should succeed") }
         )
 
         XCTAssertEqual(shown, [1])
@@ -84,8 +97,11 @@ final class RetainedWindowVerificationTests: XCTestCase {
         let result = RetainedWindowVerification.run(
             initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
             showSpace: { _, _ in showCount += 1; cancelled = true; return true },
+            restoreSpace: { _, _ in true },
+            readSpaces: { initial.spaces },
             readState: { XCTFail("cancelled verification must not read state"); return initial },
-            canContinue: { !cancelled }, verificationUnavailable: { _ in XCTFail("cancelled") }
+            canContinue: { !cancelled }, verificationUnavailable: { _ in XCTFail("cancelled") },
+            returnUnavailable: { _, _ in XCTFail("return should succeed") }
         )
 
         XCTAssertEqual(showCount, 1)
@@ -98,8 +114,11 @@ final class RetainedWindowVerificationTests: XCTestCase {
 
         let result = RetainedWindowVerification.run(
             initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
-            showSpace: { _, _ in true }, readState: { self.state(active: 3, windows: []) },
-            canContinue: { true }, verificationUnavailable: { unavailable.append($0) }
+            showSpace: { _, _ in true },
+            restoreSpace: { _, _ in true },
+            readSpaces: { initial.spaces }, readState: { self.state(active: 3, windows: []) },
+            canContinue: { true }, verificationUnavailable: { unavailable.append($0) },
+            returnUnavailable: { _, _ in XCTFail("return should succeed") }
         )
 
         XCTAssertEqual(unavailable, [1])
@@ -116,13 +135,128 @@ final class RetainedWindowVerificationTests: XCTestCase {
         let result = RetainedWindowVerification.run(
             initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
             showSpace: { space, _ in shown.append(space.id); return space.id == 2 },
+            restoreSpace: { _, _ in true },
+            readSpaces: { initial.spaces },
             readState: { self.state(active: 2, windows: [self.window(20, space: 2, onscreen: true)]) },
-            canContinue: { true }, verificationUnavailable: { unavailable.append($0) }
+            canContinue: { true }, verificationUnavailable: { unavailable.append($0) },
+            returnUnavailable: { _, _ in XCTFail("return should succeed") }
         )
 
         XCTAssertEqual(shown, [1, 2])
         XCTAssertEqual(unavailable, [1])
         XCTAssertEqual(Set(result.windows.map(\.id)), [10, 20])
+    }
+
+    func testReturnsChangedDisplaysToOriginalSpacesWithoutResurrectingSurfaces() {
+        let secondDisplay = LiveDisplay(id: 2, uuid: "E", frame: display.frame, isMain: false)
+        let untouchedDisplay = LiveDisplay(id: 3, uuid: "F", frame: display.frame, isMain: false)
+        let first = window(10, space: 1)
+        let second = window(20, space: 10)
+        var initial = state(active: 3, windows: [first, second])
+        initial.displays += [secondDisplay, untouchedDisplay]
+        initial.spaces += [
+            LiveSpace(id: 10, key: "E1", kind: .desktop, displayUUID: "E", index: 0, isActive: false),
+            LiveSpace(id: 30, key: "E2", kind: .desktop, displayUUID: "E", index: 1, isActive: true),
+            LiveSpace(id: 100, key: "F1", kind: .desktop, displayUUID: "F", index: 0, isActive: true),
+        ]
+        var currentSpaces = initial.spaces
+        var restored: [UInt64] = []
+        var readCount = 0
+
+        let result = RetainedWindowVerification.run(
+            initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
+            showSpace: { space, _ in currentSpaces = self.showing(space, in: currentSpaces); return true },
+            restoreSpace: { space, _ in
+                restored.append(space.id)
+                currentSpaces = self.showing(space, in: currentSpaces)
+                return true
+            },
+            readSpaces: { currentSpaces },
+            readState: {
+                readCount += 1
+                let windows = readCount == 1 ? [second] : (readCount == 2 ? [] : initial.windows)
+                return LiveState(displays: initial.displays, spaces: currentSpaces, windows: windows)
+            },
+            canContinue: { true }, verificationUnavailable: { _ in XCTFail("verification should succeed") },
+            returnUnavailable: { _, _ in XCTFail("return should succeed") }
+        )
+
+        XCTAssertEqual(restored, [3, 30])
+        XCTAssertEqual(readCount, 3)
+        XCTAssertEqual(result.spaces.filter(\.isActive).map(\.id), [3, 30, 100])
+        XCTAssertTrue(result.windows.isEmpty)
+    }
+
+    func testCancellationAfterFailedShowStillReturnsActualChangedSpace() {
+        let initial = state(active: 3, windows: [window(10, space: 1)])
+        var currentSpaces = initial.spaces
+        var cancelled = false
+        var restored: [UInt64] = []
+
+        let result = RetainedWindowVerification.run(
+            initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
+            showSpace: { space, _ in
+                currentSpaces = self.showing(space, in: currentSpaces)
+                cancelled = true
+                return false
+            },
+            restoreSpace: { space, _ in
+                restored.append(space.id)
+                currentSpaces = self.showing(space, in: currentSpaces)
+                return true
+            },
+            readSpaces: { currentSpaces },
+            readState: { XCTFail("cancelled cleanup must avoid a full AX read"); return initial },
+            canContinue: { !cancelled }, verificationUnavailable: { _ in XCTFail("cancelled") },
+            returnUnavailable: { _, _ in XCTFail("return should succeed") }
+        )
+
+        XCTAssertEqual(restored, [3])
+        XCTAssertEqual(currentSpaces.filter(\.isActive).map(\.id), [3])
+        XCTAssertEqual(result.spaces.filter(\.isActive).map(\.id), [3])
+    }
+
+    func testFailedOriginalSpaceReturnIsReported() {
+        let initial = state(active: 3, windows: [window(10, space: 1)])
+        var currentSpaces = initial.spaces
+        var unavailable: [UInt64] = []
+
+        _ = RetainedWindowVerification.run(
+            initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
+            showSpace: { space, _ in currentSpaces = self.showing(space, in: currentSpaces); return true },
+            restoreSpace: { _, _ in false }, readSpaces: { currentSpaces },
+            readState: { LiveState(displays: initial.displays, spaces: currentSpaces, windows: []) },
+            canContinue: { true }, verificationUnavailable: { _ in XCTFail("verification should succeed") },
+            returnUnavailable: { space, _ in unavailable.append(space.id) }
+        )
+
+        XCTAssertEqual(unavailable, [3])
+    }
+
+    func testAlreadyOriginalSpaceStillConfirmsInspectionClosure() {
+        let initial = state(active: 3, windows: [window(10, space: 1)])
+        var cleanupCount = 0
+        var unavailable: [UInt64] = []
+
+        _ = RetainedWindowVerification.run(
+            initialState: initial, savedWindows: saved(initial.windows), candidates: candidates,
+            showSpace: { _, _ in false },
+            restoreSpace: { _, _ in cleanupCount += 1; return false }, readSpaces: { initial.spaces },
+            readState: { XCTFail("unchanged Space needs no full read"); return initial },
+            canContinue: { true }, verificationUnavailable: { _ in },
+            returnUnavailable: { space, _ in unavailable.append(space.id) }
+        )
+
+        XCTAssertEqual(cleanupCount, 1)
+        XCTAssertEqual(unavailable, [3])
+    }
+
+    private func showing(_ space: LiveSpace, in spaces: [LiveSpace]) -> [LiveSpace] {
+        spaces.map { current in
+            var result = current
+            if current.displayUUID == space.displayUUID { result.isActive = current.id == space.id }
+            return result
+        }
     }
 }
 #endif
