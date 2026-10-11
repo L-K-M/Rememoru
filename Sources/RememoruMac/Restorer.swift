@@ -4,6 +4,62 @@ import ApplicationServices
 import CoreGraphics
 import RememoruCore
 
+enum RetainedWindowVerification {
+    static func run(
+        initialState: LiveState, savedWindows: [WindowRecord],
+        candidates: (LiveState, [Int: WindowMatch]) -> [UInt64: [LiveWindow]],
+        showSpace: (LiveSpace, LiveDisplay) -> Bool,
+        readState: () -> LiveState, canContinue: () -> Bool,
+        verificationUnavailable: (UInt64) -> Void
+    ) -> LiveState {
+        var state = initialState
+        var checkedSpaces = Set<UInt64>()
+        var excludedIDs = Set<UInt32>()
+        var unverifiedWindows: [UInt32: LiveWindow] = [:]
+
+        while canContinue() {
+            let matches = WindowMatcher.match(savedWindows, to: state.windows)
+            let groups = candidates(state, matches)
+            guard let spaceID = groups.keys.filter({ !checkedSpaces.contains($0) }).sorted().first,
+                  let windows = groups[spaceID] else { break }
+            checkedSpaces.insert(spaceID)
+
+            guard let space = state.space(id: spaceID), let display = state.display(uuid: space.displayUUID),
+                  showSpace(space, display) else {
+                for window in windows { unverifiedWindows[window.id] = window }
+                if canContinue() { verificationUnavailable(spaceID) }
+                continue
+            }
+            guard canContinue() else { break }
+            var fresh = readState()
+            guard canContinue() else { break }
+
+            let presentIDs = Set(fresh.windows.map(\.id))
+            if fresh.space(id: spaceID)?.isActive == true {
+                // Unmatched helpers on this Space can otherwise replace a
+                // rejected match after another Space makes them invisible.
+                excludedIDs.formUnion(state.windows.filter { $0.spaceID == spaceID }
+                    .map(\.id).filter { !presentIDs.contains($0) })
+            } else {
+                // A user can switch away while AX is being read. Absence
+                // on an unconfirmed Space does not prove a window closed.
+                for window in windows { unverifiedWindows[window.id] = window }
+                verificationUnavailable(spaceID)
+            }
+
+            // Later reads can see a retained surface again once its Space
+            // is inactive. Keep confirmed exclusions across every rematch.
+            fresh.windows.removeAll { excludedIDs.contains($0.id) }
+            for window in unverifiedWindows.values.sorted(by: { $0.id < $1.id })
+                where !presentIDs.contains(window.id) && !excludedIDs.contains(window.id) {
+                fresh.windows.append(window)
+            }
+            state = fresh
+        }
+        return state
+    }
+}
+
 /// Executes a restore plan against the live system. Every step is
 /// confirmed by re-reading WindowServer state; nothing is reported done
 /// because an API call merely returned.
@@ -70,10 +126,24 @@ final class Restorer {
         // Opening can replace the startup window; match only the fresh state.
         progress("Reading windows…")
         state = reader.read()
-        if report.failures.contains(where: { $0.step == .openWeChat }) {
-            state.windows.removeAll { $0.bundleID == WeChatStartup.bundleID }
-        }
+        let excludedBundleIDs: Set<String> = report.failures.contains(where: { $0.step == .openWeChat })
+            ? [WeChatStartup.bundleID] : []
+        state.windows.removeAll { excludedBundleIDs.contains($0.bundleID ?? "") }
         matches = WindowMatcher.match(snapshot.windows, to: state.windows)
+
+        let pointer = mode == .apply ? CGEvent(source: nil)?.location : nil
+        defer {
+            if let pointer { CGWarpMouseCursorPosition(pointer) }
+        }
+        if mode == .apply {
+            verifyMatchedWindows(excludingBundleIDs: excludedBundleIDs)
+        }
+        if cancellation.isCancelled {
+            report.cancelled = true
+            log(report.summary)
+            return report
+        }
+
         let plan = RestorePlanner.plan(snapshot: snapshot, live: state, matches: matches, options: options)
         report.unmatched = plan.unmatched
         report.notes = plan.notes
@@ -87,11 +157,6 @@ final class Restorer {
                 report.entries.append(.init(step: step, outcome: .skipped("dry run")))
             }
             return report
-        }
-
-        let pointer = CGEvent(source: nil)?.location
-        defer {
-            if let pointer { CGWarpMouseCursorPosition(pointer) }
         }
 
         // focus steps switch spaces, so they run last, after the deferred
@@ -467,6 +532,67 @@ final class Restorer {
     }
 
     // MARK: - Helpers
+
+    /// An omitted match on another Space can be real or retained. Inspect
+    /// only matched windows whose saved display can actually be restored.
+    private func verifyMatchedWindows(excludingBundleIDs: Set<String>) {
+        state = RetainedWindowVerification.run(
+            initialState: state, savedWindows: snapshot.windows,
+            candidates: verificationCandidates,
+            showSpace: { space, display in
+                self.progress("Checking windows…")
+                self.log("checking matched windows on Space \(space.id)")
+                return SpaceSwitcher.show(
+                    spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces },
+                    canContinue: { !self.cancellation.isCancelled }
+                ) != nil
+            },
+            readState: {
+                var live = self.reader.read()
+                // Failed startup preparation must remain excluded after
+                // another app's original Space has been inspected.
+                live.windows.removeAll { excludingBundleIDs.contains($0.bundleID ?? "") }
+                return live
+            },
+            canContinue: { !self.cancellation.isCancelled },
+            verificationUnavailable: { self.log("could not verify windows on Space \($0); keeping their matches") }
+        )
+        matches = WindowMatcher.match(snapshot.windows, to: state.windows)
+    }
+
+    private func verificationCandidates(
+        state: LiveState, matches: [Int: WindowMatch]
+    ) -> [UInt64: [LiveWindow]] {
+        let displayMap = RestorePlanner.mapDisplays(snapshot: snapshot, live: state, fallback: options.displayFallback)
+        var groups: [UInt64: [LiveWindow]] = [:]
+        var readPIDs = Set<pid_t>()
+        var listings: [pid_t: WindowElements.Listing<AXElement>] = [:]
+
+        for index in matches.keys.sorted() {
+            guard let window = matches[index]?.live, let savedDisplay = snapshot.windows[index].displayUUID,
+                  displayMap[savedDisplay] != nil, let space = state.space(id: window.spaceID) else { continue }
+            let hidden = NSRunningApplication(processIdentifier: window.pid)?.isHidden ?? true
+            // Avoid another AX request unless the visibility and app state
+            // could require showing this window's original Space.
+            guard WindowFilter.requiresSpaceVerification(
+                window, on: space, applicationHidden: hidden, accessibility: .notListed
+            ) else { continue }
+
+            if readPIDs.insert(window.pid).inserted {
+                listings[window.pid] = reader.elements.listed(pid: window.pid)
+            }
+            let listed = listings[window.pid]
+            let presence = WindowFilter.accessibilityPresence(
+                isListed: listed?.windows[window.id] != nil,
+                listingIsComplete: listed?.isComplete == true, hasElement: false
+            )
+            guard WindowFilter.requiresSpaceVerification(
+                window, on: space, applicationHidden: hidden, accessibility: presence
+            ) else { continue }
+            groups[space.id, default: []].append(window)
+        }
+        return groups
+    }
 
     /// Re-reads spaces after a step. Window positions are not needed again
     /// after planning (steps query WindowServer per window), and a full read

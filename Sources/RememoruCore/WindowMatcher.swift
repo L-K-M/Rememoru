@@ -46,6 +46,10 @@ public enum WindowMatcher {
         var leftovers: [(distance: Double, saved: Int, live: Int)] = []
         for (i, s) in saved.enumerated() where result[i] == nil {
             for (j, l) in live.enumerated() where !usedLive.contains(j) && isSameApp(s, l) {
+                // Unmapped, offscreen surfaces cannot be captured as layout
+                // windows either. Only identity or title evidence can pair
+                // them; proximity alone can select a closed helper surface.
+                guard l.spaceID != nil || l.isOnscreen || l.isMinimized else { continue }
                 leftovers.append((s.frame.distance(to: l.frame), i, j))
             }
         }

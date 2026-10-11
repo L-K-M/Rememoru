@@ -29,6 +29,17 @@ public enum WindowFilter {
         info.compactMap(candidate)
     }
 
+    /// Remote tokens can resolve a closed window's retained AX object.
+    /// A complete AXWindows read still proves that the window is omitted;
+    /// the Space, visibility and minimized checks decide whether to exclude it.
+    public static func accessibilityPresence(
+        isListed: Bool, listingIsComplete: Bool, hasElement: Bool
+    ) -> AccessibilityPresence {
+        if isListed { return .found }
+        if listingIsComplete { return .notListed }
+        return hasElement ? .found : .unavailable
+    }
+
     /// WindowServer retains closed backing surfaces. AX omission only
     /// identifies those on an active Space, while their app is not hidden.
     public static func isRetainedSurface(
@@ -36,6 +47,17 @@ public enum WindowFilter {
         accessibility: AccessibilityPresence
     ) -> Bool {
         accessibility == .notListed && space?.isActive == true
+            && !window.isOnscreen && !window.isMinimized && !applicationHidden
+    }
+
+    /// AXWindows omits real windows on inactive Spaces too. Show their
+    /// original Space before deciding whether an omitted match is retained.
+    public static func requiresSpaceVerification(
+        _ window: LiveWindow, on space: LiveSpace?, applicationHidden: Bool,
+        accessibility: AccessibilityPresence
+    ) -> Bool {
+        guard let space, space.kind.isRestorable else { return false }
+        return accessibility == .notListed && !space.isActive
             && !window.isOnscreen && !window.isMinimized && !applicationHidden
     }
 

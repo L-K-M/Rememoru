@@ -70,6 +70,16 @@ enum WeChatStartupClick {
             return fail("could not create the mouse click")
         }
 
+        // Frontmost and onscreen flags can precede AX hit-test readiness
+        // during activation. Wait for the same exact system-wide target;
+        // an unrelated or covered control must never authorize a click.
+        var hitFailure = "the pointer target is not the Open WeChat button"
+        guard waitForHit(timeout: min(2, deadline.timeIntervalSinceNow), canContinue: canContinue, matches: {
+            hitMatches(button: button, at: point, canContinue: canContinue, reportMiss: { hitFailure = $0 })
+        }) else { return fail(hitFailure) }
+
+        // Re-read every action guard after waiting: the window or account
+        // panel may have changed while AX was becoming ready.
         var labels: [String] = []
         for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
             guard canContinue() else { return fail("the startup action was cancelled") }
@@ -85,7 +95,8 @@ enum WeChatStartupClick {
         let isEnabled = button.bool(kAXEnabledAttribute) == true
         guard canContinue() else { return fail("the startup action was cancelled") }
         let frontmost = isFrontmost(pid)
-        let hitMatches = hitMatches(button: button, at: point, canContinue: canContinue)
+        let hitMatches = hitMatches(button: button, at: point, canContinue: canContinue,
+                                    reportMiss: { hitFailure = $0 })
         guard canContinue(), WeChatStartup.canClickOpenButton(
             isButton: isButton, labels: labels, isEnabled: isEnabled,
             isFrontmost: frontmost, isWindowOnscreen: true, hitMatchesButton: hitMatches
@@ -94,7 +105,7 @@ enum WeChatStartupClick {
                 return fail("the startup control is no longer the enabled Open WeChat button")
             }
             if !frontmost { return fail("WeChat is no longer frontmost") }
-            return fail("the pointer target is not the Open WeChat button")
+            return fail(hitFailure)
         }
 
         down.setIntegerValueField(.mouseEventClickState, value: 1)
@@ -104,6 +115,19 @@ enum WeChatStartupClick {
         // Always release after posting down, including if cancellation arrives.
         up.post(tap: .cghidEventTap)
         return true
+    }
+
+    static func waitForHit(
+        timeout: TimeInterval, interval: TimeInterval = 0.05,
+        canContinue: () -> Bool, matches: () -> Bool
+    ) -> Bool {
+        let confirmed = MissionControl.wait(timeout: timeout, interval: interval) { () -> Bool? in
+            guard canContinue() else { return false }
+            let matched = matches()
+            guard canContinue() else { return false }
+            return matched ? true : nil
+        }
+        return confirmed == true && canContinue()
     }
 
     private static func isFrontmost(_ pid: pid_t) -> Bool {
@@ -128,18 +152,30 @@ enum WeChatStartupClick {
         String(format: "(%.0f, %.0f) %.0f x %.0f", frame.x, frame.y, frame.w, frame.h)
     }
 
-    private static func hitMatches(button: AXElement, at point: CGPoint, canContinue: () -> Bool) -> Bool {
+    private static func hitMatches(
+        button: AXElement, at point: CGPoint, canContinue: () -> Bool,
+        reportMiss: (String) -> Void
+    ) -> Bool {
         var raw: AXUIElement?
-        guard canContinue(),
-              AXUIElementCopyElementAtPosition(AXElement.systemWide.element, Float(point.x), Float(point.y), &raw) == .success,
-              let raw else { return false }
+        guard canContinue() else { return false }
+        let error = AXUIElementCopyElementAtPosition(
+            AXElement.systemWide.element, Float(point.x), Float(point.y), &raw
+        )
+        guard error == .success, let raw else {
+            reportMiss("the pointer target is unavailable (AX error \(error.rawValue))")
+            return false
+        }
         var hit: AXElement? = AXElement(element: raw)
         // A hit can be the button's text child. Compare AX identity up its parents.
         for _ in 0..<8 {
-            guard canContinue(), let current = hit else { return false }
+            guard canContinue() else { return false }
+            guard let current = hit else { break }
             if CFEqual(current.element, button.element) { return true }
             hit = current.element(kAXParentAttribute)
         }
+        guard canContinue() else { return false }
+        let role = AXElement(element: raw).role ?? "unknown role"
+        reportMiss("the pointer target is not the Open WeChat button (hit \(role))")
         return false
     }
 }
