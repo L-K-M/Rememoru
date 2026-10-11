@@ -20,6 +20,42 @@ final class WindowFilterTests: XCTestCase {
         ))
     }
 
+    func testRejectsRetainedRemoteWindowOmittedFromCompleteListing() {
+        let presence = WindowFilter.accessibilityPresence(
+            isListed: false, listingIsComplete: true, hasElement: true
+        )
+
+        XCTAssertEqual(presence, .notListed)
+        XCTAssertTrue(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: activeDesktop, applicationHidden: false, accessibility: presence
+        ))
+    }
+
+    func testPreservesRemoteWindowWhenListingCannotProveOmission() {
+        let presence = WindowFilter.accessibilityPresence(
+            isListed: false, listingIsComplete: false, hasElement: true
+        )
+
+        XCTAssertEqual(presence, .found)
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: activeDesktop, applicationHidden: false, accessibility: presence
+        ))
+        XCTAssertEqual(WindowFilter.accessibilityPresence(
+            isListed: false, listingIsComplete: false, hasElement: false
+        ), .unavailable)
+    }
+
+    func testPreservesListedWindowEvenWithCompleteListing() {
+        let presence = WindowFilter.accessibilityPresence(
+            isListed: true, listingIsComplete: true, hasElement: true
+        )
+
+        XCTAssertEqual(presence, .found)
+        XCTAssertFalse(WindowFilter.isRetainedSurface(
+            offscreenWindow(), on: activeDesktop, applicationHidden: false, accessibility: presence
+        ))
+    }
+
     func testPreservesRealWindowsOnInactiveSpaces() {
         var space = activeDesktop
         space.isActive = false
@@ -27,6 +63,48 @@ final class WindowFilterTests: XCTestCase {
         XCTAssertFalse(WindowFilter.isRetainedSurface(
             offscreenWindow(), on: space, applicationHidden: false, accessibility: .notListed
         ))
+    }
+
+    func testRequiresSpaceVerificationForOmittedInactiveWindow() {
+        var inactive = activeDesktop
+        inactive.isActive = false
+
+        XCTAssertTrue(WindowFilter.requiresSpaceVerification(
+            offscreenWindow(), on: inactive, applicationHidden: false, accessibility: .notListed
+        ))
+        XCTAssertFalse(WindowFilter.requiresSpaceVerification(
+            offscreenWindow(), on: activeDesktop, applicationHidden: false, accessibility: .notListed
+        ))
+        XCTAssertFalse(WindowFilter.requiresSpaceVerification(
+            offscreenWindow(), on: nil, applicationHidden: false, accessibility: .notListed
+        ))
+        inactive.kind = .other("wallpaper")
+        XCTAssertFalse(WindowFilter.requiresSpaceVerification(
+            offscreenWindow(), on: inactive, applicationHidden: false, accessibility: .notListed
+        ))
+    }
+
+    func testDoesNotVerifyHiddenMinimizedVisibleOrUncertainWindows() {
+        var inactive = activeDesktop
+        inactive.isActive = false
+        var visible = offscreenWindow()
+        visible.isOnscreen = true
+
+        XCTAssertFalse(WindowFilter.requiresSpaceVerification(
+            offscreenWindow(), on: inactive, applicationHidden: true, accessibility: .notListed
+        ))
+        XCTAssertFalse(WindowFilter.requiresSpaceVerification(
+            offscreenWindow(minimized: true), on: inactive,
+            applicationHidden: false, accessibility: .notListed
+        ))
+        XCTAssertFalse(WindowFilter.requiresSpaceVerification(
+            visible, on: inactive, applicationHidden: false, accessibility: .notListed
+        ))
+        for presence in [WindowFilter.AccessibilityPresence.found, .unavailable] {
+            XCTAssertFalse(WindowFilter.requiresSpaceVerification(
+                offscreenWindow(), on: inactive, applicationHidden: false, accessibility: presence
+            ))
+        }
     }
 
     func testPreservesHiddenAppsMinimizedWindowsAndFailedAXReads() {
@@ -156,6 +234,54 @@ final class WindowMatcherTests: XCTestCase {
 
         XCTAssertEqual(matches[0]?.live.id, 7)
         XCTAssertEqual(matches[0]?.basis, .sameWindow)
+    }
+
+    func testPositionalFallbackDoesNotChooseUnmappedOffscreenHelper() {
+        let record = saved(1, "Claude", "Old title")
+        var helper = live(20, "Claude", "")
+        helper.isOnscreen = false
+        var window = live(21, "Claude", "Changed title", x: 1000)
+        window.isOnscreen = false
+        window.spaceID = 5
+
+        XCTAssertNil(WindowMatcher.match([record], to: [helper])[0])
+        let match = WindowMatcher.match([record], to: [helper, window])[0]
+        XCTAssertEqual(match?.live.id, 21)
+        XCTAssertEqual(match?.basis, .position)
+    }
+
+    func testPositionalFallbackPreservesVisibleMinimizedAndMappedWindows() {
+        let record = saved(1, "Notes", "Old title")
+        let visible = live(20, "Notes", "Changed title")
+        var minimized = visible
+        minimized.isOnscreen = false
+        minimized.isMinimized = true
+        var mapped = visible
+        mapped.isOnscreen = false
+        mapped.spaceID = 5
+
+        for window in [visible, minimized, mapped] {
+            let match = WindowMatcher.match([record], to: [window])[0]
+            XCTAssertEqual(match?.live.id, window.id)
+            XCTAssertEqual(match?.basis, .position)
+        }
+    }
+
+    func testUnmappedOffscreenWindowsStillMatchByIdentityOrTitle() {
+        var window = live(20, "Notes", "Existing title", pid: 42)
+        window.isOnscreen = false
+
+        let identity = WindowMatcher.match(
+            [saved(20, "Notes", "Old title", pid: 42)], to: [window]
+        )[0]
+        XCTAssertEqual(identity?.live.id, window.id)
+        XCTAssertEqual(identity?.basis, .sameWindow)
+
+        let title = WindowMatcher.match(
+            [saved(1, "Notes", "Existing title", pid: 1)], to: [window]
+        )[0]
+        XCTAssertEqual(title?.live.id, window.id)
+        XCTAssertEqual(title?.basis, .title)
     }
 
     func testNeverPairsDifferentApps() {

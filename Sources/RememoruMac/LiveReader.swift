@@ -63,8 +63,11 @@ final class LiveReader {
                     windows[index].isMinimized = element.bool(kAXMinimizedAttribute) ?? false
                     if windows[index].title.isEmpty { windows[index].title = element.title ?? "" }
                 }
-                let presence: WindowFilter.AccessibilityPresence = found[window.id] != nil ? .found
-                    : (listed?.isComplete == true ? .notListed : .unavailable)
+                let presence = WindowFilter.accessibilityPresence(
+                    isListed: listed?.windows[window.id] != nil,
+                    listingIsComplete: listed?.isComplete == true,
+                    hasElement: found[window.id] != nil
+                )
                 if WindowFilter.isRetainedSurface(
                     windows[index], on: managed.spaces.first { $0.id == window.spaceID },
                     applicationHidden: apps[pid]?.isHidden ?? true, accessibility: presence
