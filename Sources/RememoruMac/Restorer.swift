@@ -5,14 +5,17 @@ import CoreGraphics
 import RememoruCore
 
 enum RetainedWindowVerification {
+    static let returnTimeout: TimeInterval = 5
+
     static func run(
         initialState: LiveState, savedWindows: [WindowRecord],
         candidates: (LiveState, [Int: WindowMatch]) -> [UInt64: [LiveWindow]],
         showSpace: (LiveSpace, LiveDisplay) -> Bool,
-        restoreSpace: (LiveSpace, LiveDisplay) -> Bool, readSpaces: () -> [LiveSpace],
+        restoreSpace: (LiveSpace, LiveDisplay, Date) -> Bool, readSpaces: () -> [LiveSpace],
         readState: () -> LiveState, canContinue: () -> Bool,
         verificationUnavailable: (UInt64) -> Void,
-        returnUnavailable: (LiveSpace, LiveDisplay) -> Void
+        returnUnavailable: (LiveSpace, LiveDisplay) -> Void,
+        now: () -> Date = { Date() }
     ) -> LiveState {
         var state = initialState
         var checkedSpaces = Set<UInt64>()
@@ -82,7 +85,8 @@ enum RetainedWindowVerification {
             attemptedReturn = attemptedReturn || active?.id != original.id
             // Even an unchanged Space needs confirmed Mission Control
             // closure after an unsuccessful inspection request.
-            guard restoreSpace(original, display),
+            let deadline = now().addingTimeInterval(returnTimeout)
+            guard restoreSpace(original, display, deadline),
                   readSpaces().contains(where: {
                       $0.displayUUID == display.uuid && $0.id == original.id && $0.isActive
                   }) else {
@@ -583,8 +587,7 @@ final class Restorer {
     /// An omitted match on another Space can be real or retained. Inspect
     /// only matched windows whose saved display can actually be restored.
     private func verifyMatchedWindows(excludingBundleIDs: Set<String>) -> String? {
-        var returnFailure: String?
-        var cleanupDeadline: Date?
+        var failedDisplays: [String] = []
         state = RetainedWindowVerification.run(
             initialState: state, savedWindows: snapshot.windows,
             candidates: verificationCandidates,
@@ -596,11 +599,9 @@ final class Restorer {
                     canContinue: { !self.cancellation.isCancelled }
                 ) != nil
             },
-            restoreSpace: { space, display in
+            restoreSpace: { space, display, deadline in
                 // Cleanup is independent of cancellation. Its deadline stops
                 // new operations; in-flight AX calls retain their own timeout.
-                let deadline = cleanupDeadline ?? Date().addingTimeInterval(5)
-                cleanupDeadline = deadline
                 return SpaceSwitcher.show(
                     spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces },
                     canContinue: { Date() < deadline }
@@ -618,13 +619,13 @@ final class Restorer {
             verificationUnavailable: { self.log("could not verify windows on Space \($0); keeping their matches") },
             returnUnavailable: { space, display in
                 self.log("could not return to original Space \(space.id) on display \(display.uuid.prefix(8))")
-                if returnFailure == nil {
-                    returnFailure = "Could not return to the original Space on display \(display.uuid.prefix(8)); switch back and retry the restore"
-                }
+                failedDisplays.append(String(display.uuid.prefix(8)))
             }
         )
         matches = WindowMatcher.match(snapshot.windows, to: state.windows)
-        return returnFailure
+        guard !failedDisplays.isEmpty else { return nil }
+        let target = failedDisplays.count == 1 ? "Space on display" : "Spaces on displays"
+        return "Could not return to the original \(target) \(failedDisplays.joined(separator: ", ")); switch back and retry the restore"
     }
 
     private func verificationCandidates(
