@@ -425,14 +425,26 @@ final class Restorer {
         let command = initiatingSide == .left ? "Left of Screen" : "Right of Screen"
         if let failure = placeOnAnchor([left, right], display: display, anchor: anchor) { return .failed(failure) }
         guard let liveDisplay = state.display(uuid: display) else { return .failed("display is not connected") }
-        guard let element = visibleElement(of: initiator) else { return .failed("no accessibility element for \(initiator)") }
-        raise(initiator, element)
-        let ready = MissionControl.wait(timeout: 2) { () -> Bool? in
-            if cancellation.isCancelled { return false }
-            return menuCommandsReady(for: initiator) ? true : nil
-        } == true
+        var focusAttempts = 0
+        var lastFocusState = "not observed"
+        let ready = WindowCommandFocus.acquire(
+            canContinue: { !self.cancellation.isCancelled },
+            requestFocus: {
+                focusAttempts += 1
+                self.requestMenuFocus(initiator, attempt: focusAttempts)
+            },
+            isReady: {
+                self.menuCommandsReady(for: initiator, reportState: { lastFocusState = $0 })
+            },
+            waitUntilReady: { condition in
+                MissionControl.wait(timeout: 0.7, interval: 0.1, condition) == true
+            }
+        )
         if cancellation.isCancelled { return .skipped("cancelled") }
-        guard ready else { return .failed("could not focus \(initiator) for its Full Screen Tile command") }
+        guard ready else {
+            log("  Split View focus not confirmed after \(focusAttempts) request(s): \(lastFocusState)")
+            return .failed("could not focus \(initiator) for its Full Screen Tile command")
+        }
 
         guard let item = menuItem(pid: initiator.pid, path: [["Window"], [command]]) else {
             return .failed("\(initiator.appName) has no Window > Full Screen Tile > \(command) menu item")
@@ -728,13 +740,44 @@ final class Restorer {
         Thread.sleep(forTimeInterval: 0.3)
     }
 
-    private func menuCommandsReady(for window: WindowTarget) -> Bool {
+    private func requestMenuFocus(_ window: WindowTarget, attempt: Int) {
+        guard !cancellation.isCancelled else { return }
+        // A Space transition can replace AX elements. Reacquire only the
+        // planned window, never whichever window the app now calls main.
+        reader.elements.invalidate()
+        guard let element = element(of: window), element.pid == window.pid,
+              element.windowID == window.id, element.role == kAXWindowRole else {
+            log("  focus request \(attempt): target window \(window.id) is unavailable")
+            return
+        }
+        guard !cancellation.isCancelled else { return }
+        let activated = NSRunningApplication(processIdentifier: window.pid)?.activate(options: [])
+        guard !cancellation.isCancelled else { return }
+        let frontmost = AXElement.application(window.pid).set(kAXFrontmostAttribute, kCFBooleanTrue!)
+        guard !cancellation.isCancelled else { return }
+        let main = element.set(kAXMainAttribute, kCFBooleanTrue!)
+        guard !cancellation.isCancelled else { return }
+        let raised = element.perform(kAXRaiseAction)
+        guard !cancellation.isCancelled else { return }
+        // AXMain does not imply keyboard focus. Request it explicitly;
+        // unsupported setters still require the exact observed IDs below.
+        let focused = element.set(kAXFocusedAttribute, kCFBooleanTrue!)
+        log("  focus request \(attempt) window=\(window.id) activate=\(activated.map(String.init) ?? "unavailable")"
+            + " AXFrontmost=\(frontmost.rawValue) AXMain=\(main.rawValue) AXRaise=\(raised) AXFocused=\(focused.rawValue)")
+    }
+
+    private func menuCommandsReady(for window: WindowTarget, reportState: ((String) -> Void)? = nil) -> Bool {
         let application = AXElement.application(window.pid)
+        let frontmost = application.bool(kAXFrontmostAttribute)
+        let main = application.element(kAXMainWindowAttribute)?.windowID
+        let focused = application.element(kAXFocusedWindowAttribute)?.windowID
+        reportState?("target=\(window.id) frontmost=\(frontmost.map(String.init) ?? "unknown")"
+            + " main=\(main.map(String.init) ?? "unknown") focused=\(focused.map(String.init) ?? "unknown")")
         return WindowCommandReadiness.permits(
             targetWindowID: window.id,
-            isFrontmost: application.bool(kAXFrontmostAttribute),
-            mainWindowID: application.element(kAXMainWindowAttribute)?.windowID,
-            focusedWindowID: application.element(kAXFocusedWindowAttribute)?.windowID
+            isFrontmost: frontmost,
+            mainWindowID: main,
+            focusedWindowID: focused
         )
     }
 
