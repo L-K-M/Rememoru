@@ -52,7 +52,7 @@ jobs:
       - name: Archive
         run: |
           mkdir -p release
-          ditto -c -k --keepParent dist/Rememoru.app "release/Rememoru-${{ steps.source.outputs.version }}.zip"
+          ditto -c -k --keepParent dist/Rememoru.app "release/Rememoru-${{ steps.source.outputs.version }}-macos-arm64.zip"
           (cd release && shasum -a 256 *.zip > SHA256SUMS.txt)
 
       - name: Publish draft
