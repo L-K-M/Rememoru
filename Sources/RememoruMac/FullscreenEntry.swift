@@ -12,15 +12,18 @@ enum FullscreenEntry {
         case entered
         case unavailable
         case notConfirmed
+        case notFocused
     }
 
     static func run(
+        prepareWindow: () -> Bool = { true },
         setFullscreen: () -> Bool,
         readFullscreen: () -> Bool?,
         confirm: (TimeInterval) -> Bool,
         performMenu: (MenuCommand) -> Bool
     ) -> Result {
         if confirm(0) { return .entered }
+        guard prepareWindow() else { return .notFocused }
         let accepted = setFullscreen()
         if accepted, confirm(5) { return .entered }
 

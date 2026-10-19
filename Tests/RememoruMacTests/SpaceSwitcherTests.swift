@@ -29,6 +29,46 @@ final class SpaceSwitcherTests: XCTestCase {
         XCTAssertEqual(method, .missionControl, "WindowServer confirmation must outlive Mission Control's closing timeout")
     }
 
+    func testFallbackWaitsForDelayedActiveSpaceAfterClosingTimesOut() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        var target = LiveSpace(id: 42, key: "target", kind: .fullscreen, displayUUID: "D", index: 0, isActive: false)
+        var fallbackAttempted = false
+        var readsAfterFallback = 0
+        var closeRequests = 0
+
+        let method = SpaceSwitcher.show(
+            spaceID: target.id, display: display,
+            readSpaces: {
+                if fallbackAttempted {
+                    readsAfterFallback += 1
+                    target.isActive = readsAfterFallback >= 2
+                }
+                return [target]
+            },
+            ensureMissionControlClosed: { closeRequests += 1; return true },
+            showMissionControl: { _, _ in fallbackAttempted = true; return false }
+        )
+
+        XCTAssertEqual(method, .missionControl)
+        XCTAssertEqual(closeRequests, 1)
+    }
+
+    func testCancellationDuringFallbackPreventsFurtherReadsAndClosure() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let target = LiveSpace(id: 42, key: "target", kind: .fullscreen, displayUUID: "D", index: 0, isActive: false)
+        var allowed = true
+
+        let method = SpaceSwitcher.show(
+            spaceID: target.id, display: display,
+            readSpaces: { XCTAssertTrue(allowed); return [target] },
+            canContinue: { allowed },
+            ensureMissionControlClosed: { XCTFail("cancelled switching must not close Mission Control"); return true },
+            showMissionControl: { _, _ in allowed = false; return false }
+        )
+
+        XCTAssertNil(method)
+    }
+
     func testShownSpaceCannotSucceedWhileMissionControlRemainsOpen() {
         let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
         let target = LiveSpace(id: 42, key: "target", kind: .desktop, displayUUID: "D", index: 0, isActive: true)

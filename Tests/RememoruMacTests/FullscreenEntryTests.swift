@@ -153,5 +153,61 @@ final class FullscreenEntryTests: XCTestCase {
         XCTAssertEqual(result, .entered)
         XCTAssertEqual(commands, [.enter], "a late AX transition must be confirmed without toggling it back out")
     }
+
+    func testAlreadyFullscreenSkipsPreparation() {
+        var prepared = false
+        var setCalled = false
+        var menuCalled = false
+        let result = FullscreenEntry.run(
+            prepareWindow: { prepared = true; return true },
+            setFullscreen: { setCalled = true; return true },
+            readFullscreen: { XCTFail("confirmed fullscreen must not read AX state"); return true },
+            confirm: { timeout in XCTAssertEqual(timeout, 0); return true },
+            performMenu: { _ in menuCalled = true; return true }
+        )
+
+        XCTAssertEqual(result, .entered)
+        XCTAssertFalse(prepared, "already-confirmed fullscreen should never prepare")
+        XCTAssertFalse(setCalled, "already-confirmed fullscreen should not send requests")
+        XCTAssertFalse(menuCalled, "already-confirmed fullscreen should not send menu commands")
+    }
+
+    func testFailedPreparationReturnsNotFocused() {
+        var setCalled = false
+        var readCalled = false
+        var menuCalled = false
+        var confirmations: [TimeInterval] = []
+        let result = FullscreenEntry.run(
+            prepareWindow: { false },
+            setFullscreen: { setCalled = true; return true },
+            readFullscreen: { readCalled = true; return nil },
+            confirm: { timeout in confirmations.append(timeout); return false },
+            performMenu: { _ in menuCalled = true; return true }
+        )
+
+        XCTAssertEqual(result, .notFocused)
+        XCTAssertFalse(setCalled, "failed preparation should not call setter")
+        XCTAssertFalse(readCalled, "failed preparation should not read state")
+        XCTAssertFalse(menuCalled, "failed preparation should not call menu")
+        XCTAssertEqual(confirmations, [0], "only the initial confirmation may run before preparation")
+    }
+
+    func testPreparationPrecedesSetter() {
+        var order: [String] = []
+        var requested = false
+        let result = FullscreenEntry.run(
+            prepareWindow: { order.append("prepare"); return true },
+            setFullscreen: { order.append("set"); requested = true; return true },
+            readFullscreen: { false },
+            confirm: { timeout in
+                order.append("confirm(\(timeout))")
+                return requested
+            },
+            performMenu: { _ in XCTFail("confirmed AX request must not use a menu"); return false }
+        )
+
+        XCTAssertEqual(result, .entered)
+        XCTAssertEqual(order, ["confirm(0.0)", "prepare", "set", "confirm(5.0)"])
+    }
 }
 #endif

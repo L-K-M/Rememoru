@@ -133,6 +133,29 @@ assert kinds.get(w.get("space_uuid")) == "fullscreen", "window not on a fullscre
 assert display["spaces"].index(w["space_uuid"]) == 1, "fullscreen space is not second"
 PY
 
+echo "e2e: focus the fullscreen window's Space"
+python3 - "$WORK/after-fullscreen.json" "$WORK/focus-fullscreen.json" <<'PY'
+import json, sys
+snap = json.load(open(sys.argv[1]))
+w = next(w for w in snap["windows"] if w["app"] == "TextEdit" and "rememoru-e2e" in (w.get("title") or ""))
+display = next(d for d in snap["displays"] if d["uuid"] == w["display_uuid"])
+assert display["active_space"] != w["space_uuid"], "focus test must start on another Space"
+display["active_space"] = w["space_uuid"]
+json.dump(snap, open(sys.argv[2], "w"))
+PY
+"$APP" restore "$WORK/focus-fullscreen.json" --no-arrange || fail "fullscreen focus reported failures"
+"$APP" snapshot -o "$WORK/after-focus.json" > /dev/null
+python3 - "$WORK/after-focus.json" <<'PY' || fail "fullscreen window's Space is not active"
+import json, sys
+snap = json.load(open(sys.argv[1]))
+w = next(w for w in snap["windows"] if w["app"] == "TextEdit" and "rememoru-e2e" in (w.get("title") or ""))
+display = next(d for d in snap["displays"] if d["uuid"] == w["display_uuid"])
+space = next(s for s in snap["spaces"] if s["uuid"] == w["space_uuid"])
+assert space["type"] == "fullscreen", "focus must preserve fullscreen"
+assert display["active_space"] == space["uuid"], "fullscreen Space was not shown"
+PY
+"$APP" restore "$WORK/after-fullscreen.json" --no-arrange || fail "could not return from fullscreen focus test"
+
 echo "e2e: 4. Split View pair"
 printf 'Rememoru end-to-end check, second window\n' > "$NOTE2"
 open -a TextEdit "$NOTE2"
