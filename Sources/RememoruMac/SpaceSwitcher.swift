@@ -43,7 +43,9 @@ enum SpaceSwitcher {
                 trace("  space switch target=\(spaceID) method=\(method.rawValue): Mission Control closure not confirmed")
                 return nil
             }
-            guard isShown(), canContinue() else {
+            let shown = isShown()
+            guard canContinue() else { return nil }
+            guard shown else {
                 trace("  space switch target=\(spaceID) method=\(method.rawValue): target no longer active")
                 return nil
             }

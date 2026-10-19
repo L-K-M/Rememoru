@@ -380,10 +380,18 @@ final class Restorer {
 
     private func enterFullscreen(_ window: WindowTarget, display: String, anchor: Int) -> RestoreReport.Outcome {
         if let failure = placeOnAnchor([window], display: display, anchor: anchor) { return .failed(failure) }
+        var menuFocusFailed = false
         let result = FullscreenEntry.run(
-            prepareWindow: { self.acquireMenuFocus(for: window, context: "Fullscreen") },
+            prepareMenu: {
+                menuFocusFailed = false
+                return self.acquireMenuFocus(for: window, context: "Fullscreen menu")
+            },
             setFullscreen: {
-                guard !self.cancellation.isCancelled, self.menuCommandsReady(for: window),
+                // The per-window AX setter can work without menu focus.
+                // Activation remains best effort; only menu commands require
+                // confirmed frontmost, main and focused-window identity.
+                self.requestMenuFocus(window, attempt: 1)
+                guard !self.cancellation.isCancelled,
                       let element = self.element(of: window), element.pid == window.pid,
                       element.windowID == window.id, element.role == kAXWindowRole else { return false }
                 guard !self.cancellation.isCancelled else { return false }
@@ -408,17 +416,21 @@ final class Restorer {
                 return confirmed
             },
             performMenu: { command in
-                guard self.acquireMenuFocus(for: window, context: "Fullscreen menu") else { return false }
                 for top in ["View", "Window"] {
                     guard let item = self.menuItem(pid: window.pid, path: [[top], [command.rawValue]]),
                           item.bool(kAXEnabledAttribute) == true else { continue }
+                    guard !self.cancellation.isCancelled, self.menuCommandsReady(for: window) else {
+                        menuFocusFailed = true
+                        CGEvent.keyPress(53)
+                        return false
+                    }
                     // Finding a menu may open it and take time. Recheck at
                     // the point of action so a late transition is preserved.
                     if command == .toggle {
                         if self.spaceOf(window.id)?.kind == .fullscreen { return true }
                         guard self.element(of: window)?.bool("AXFullScreen") == false else { return false }
                     }
-                    guard !self.cancellation.isCancelled, self.menuCommandsReady(for: window) else {
+                    guard !self.cancellation.isCancelled else {
                         CGEvent.keyPress(53)
                         return false
                     }
@@ -432,6 +444,9 @@ final class Restorer {
         if cancellation.isCancelled { return .skipped("cancelled") }
         Thread.sleep(forTimeInterval: 0.8)  // let the transition finish before the next space change
         refresh()
+        if result != .entered, menuFocusFailed {
+            return .failed("could not focus \(window) for its fullscreen command")
+        }
         switch result {
         case .entered: return .done
         case .notFocused: return .failed("could not focus \(window) for its fullscreen command")
