@@ -12,9 +12,11 @@ enum FullscreenEntry {
         case entered
         case unavailable
         case notConfirmed
+        case notFocused
     }
 
     static func run(
+        prepareMenu: () -> Bool = { true },
         setFullscreen: () -> Bool,
         readFullscreen: () -> Bool?,
         confirm: (TimeInterval) -> Bool,
@@ -31,12 +33,18 @@ enum FullscreenEntry {
         if readFullscreen() == true {
             return confirm(5) ? .entered : .notConfirmed
         }
+        guard prepareMenu() else { return confirm(0) ? .entered : .notFocused }
         if performMenu(.enter) {
             return confirm(5) ? .entered : .notConfirmed
         }
         if confirm(0) { return .entered }
         guard let fullscreen = readFullscreen() else { return accepted ? .notConfirmed : .unavailable }
         guard !fullscreen else { return confirm(5) ? .entered : .notConfirmed }
+        guard prepareMenu() else { return confirm(0) ? .entered : .notFocused }
+        // Acquiring focus can outlast a delayed AX transition. Recheck both
+        // sources before a toggle could reverse that transition.
+        if confirm(0) { return .entered }
+        guard readFullscreen() == false else { return confirm(5) ? .entered : .notConfirmed }
         guard performMenu(.toggle) else { return accepted ? .notConfirmed : .unavailable }
         return confirm(5) ? .entered : .notConfirmed
     }

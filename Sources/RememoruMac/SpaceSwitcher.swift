@@ -23,7 +23,8 @@ enum SpaceSwitcher {
         spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace],
         canContinue: @escaping () -> Bool = { true },
         ensureMissionControlClosed: (() -> Bool)? = nil,
-        showMissionControl: (UInt32, () -> Int?) -> Bool = { MissionControl.showSpace(display: $0, index: $1) }
+        showMissionControl: (UInt32, () -> Int?) -> Bool = { MissionControl.showSpace(display: $0, index: $1) },
+        trace: (String) -> Void = { _ in }
     ) -> Method? {
         guard canContinue() else { return nil }
         func current() -> [LiveSpace] {
@@ -35,13 +36,28 @@ enum SpaceSwitcher {
         func finished(_ method: Method) -> Method? {
             // Active-Space state can update while Mission Control still
             // exposes thumbnail bounds. Window mutations require it closed.
-            guard canContinue(), closeMissionControl(), canContinue(), isShown(), canContinue() else { return nil }
+            guard canContinue() else { return nil }
+            let closed = closeMissionControl()
+            guard canContinue() else { return nil }
+            guard closed else {
+                trace("  space switch target=\(spaceID) method=\(method.rawValue): Mission Control closure not confirmed")
+                return nil
+            }
+            let shown = isShown()
+            guard canContinue() else { return nil }
+            guard shown else {
+                trace("  space switch target=\(spaceID) method=\(method.rawValue): target no longer active")
+                return nil
+            }
+            trace("  space switch target=\(spaceID) confirmed via \(method.rawValue)")
             return method
         }
 
         if isShown() { return finished(.alreadyShown) }
         let initial = current()
         guard canContinue(), initial.contains(where: { $0.id == spaceID }) else { return nil }
+        trace("  space switch target=\(spaceID) active=\(initial.first(where: \.isActive).map { String($0.id) } ?? "unknown")"
+            + " count=\(initial.count)")
 
         // Dock processes gestures asynchronously. Confirm each hop before
         // sending another, and recalculate after Spaces are reordered or
@@ -54,30 +70,37 @@ enum SpaceSwitcher {
                   let active = spaces.firstIndex(where: \.isActive) else { break }
             if active == target { return finished(.gesture) }
             let previousID = spaces[active].id
+            var observedID: UInt64?
             guard canContinue() else { return nil }
             swipe(steps: target > active ? 1 : -1, on: display)
             guard MissionControl.wait(timeout: 1.5, { () -> Bool? in
                 guard canContinue() else { return false }
                 guard let activeID = current().first(where: \.isActive)?.id,
                       activeID != previousID else { return nil }
+                observedID = activeID
                 return true
-            }) == true else { break }
+            }) == true else {
+                trace("  space switch gesture from=\(previousID): no active-Space change confirmed")
+                break
+            }
+            trace("  space switch gesture from=\(previousID) to=\(observedID.map { String($0) } ?? "unknown")")
         }
         guard canContinue() else { return nil }
         if isShown() { return finished(.gesture) }
         guard canContinue() else { return nil }
-        if showMissionControl(display.id, {
+        // A thumbnail press can change the Space even when Mission Control's
+        // closing wait times out. Allow WindowServer's active state to catch up.
+        let missionControlResult = showMissionControl(display.id, {
             current().firstIndex(where: { $0.id == spaceID })
-        }),
-           MissionControl.wait(timeout: 2, { () -> Bool? in
-               guard canContinue() else { return false }
-               return isShown() ? true : nil
-           }) == true {
-            return finished(.missionControl)
+        })
+        trace("  space switch Mission Control target=\(spaceID) result=\(missionControlResult)")
+        guard MissionControl.wait(timeout: 2, { () -> Bool? in
+            guard canContinue() else { return false }
+            return isShown() ? true : nil
+        }) == true else {
+            trace("  space switch target=\(spaceID): active-Space confirmation timed out or cancelled")
+            return nil
         }
-        // A thumbnail press can change the Space even when its initial
-        // closing wait times out. Retry closure before reporting success.
-        guard canContinue(), isShown(), canContinue() else { return nil }
         return finished(.missionControl)
     }
 

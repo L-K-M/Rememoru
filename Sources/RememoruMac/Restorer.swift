@@ -380,34 +380,76 @@ final class Restorer {
 
     private func enterFullscreen(_ window: WindowTarget, display: String, anchor: Int) -> RestoreReport.Outcome {
         if let failure = placeOnAnchor([window], display: display, anchor: anchor) { return .failed(failure) }
-        guard let element = visibleElement(of: window) else { return .failed("no accessibility element for the window") }
-        raise(window, element)
-
+        var menuFocusFailed = false
         let result = FullscreenEntry.run(
-            setFullscreen: { element.setBool("AXFullScreen", true) },
-            readFullscreen: { element.bool("AXFullScreen") },
+            prepareMenu: {
+                menuFocusFailed = false
+                return self.acquireMenuFocus(for: window, context: "Fullscreen menu")
+            },
+            setFullscreen: {
+                // The per-window AX setter can work without menu focus.
+                // Activation remains best effort; only menu commands require
+                // confirmed frontmost, main and focused-window identity.
+                self.requestMenuFocus(window, attempt: 1)
+                guard !self.cancellation.isCancelled,
+                      let element = self.element(of: window), element.pid == window.pid,
+                      element.windowID == window.id, element.role == kAXWindowRole else { return false }
+                guard !self.cancellation.isCancelled else { return false }
+                let error = element.set("AXFullScreen", kCFBooleanTrue!)
+                self.log("  fullscreen request window=\(window.id) AXFullScreen=\(error.rawValue)")
+                return error == .success
+            },
+            readFullscreen: { self.element(of: window)?.bool("AXFullScreen") },
             confirm: { timeout in
-                MissionControl.wait(timeout: timeout) { self.spaceOf(window.id)?.kind == .fullscreen ? true : nil } != nil
+                let confirmed = MissionControl.wait(timeout: timeout) { () -> Bool? in
+                    guard !self.cancellation.isCancelled else { return false }
+                    return self.spaceOf(window.id)?.kind == .fullscreen ? true : nil
+                } == true
+                if !confirmed, timeout > 0, !self.cancellation.isCancelled {
+                    let space = self.spaceOf(window.id)
+                    let flag = self.element(of: window)?.bool("AXFullScreen")
+                    self.log("  fullscreen not confirmed window=\(window.id)"
+                        + " AXFullScreen=\(flag.map(String.init) ?? "unknown")"
+                        + " space=\(space.map { String($0.id) } ?? "unknown")"
+                        + " kind=\(space?.kind.rawName ?? "unknown")")
+                }
+                return confirmed
             },
             performMenu: { command in
                 for top in ["View", "Window"] {
                     guard let item = self.menuItem(pid: window.pid, path: [[top], [command.rawValue]]),
                           item.bool(kAXEnabledAttribute) == true else { continue }
+                    guard !self.cancellation.isCancelled, self.menuCommandsReady(for: window) else {
+                        menuFocusFailed = true
+                        CGEvent.keyPress(53)
+                        return false
+                    }
                     // Finding a menu may open it and take time. Recheck at
                     // the point of action so a late transition is preserved.
                     if command == .toggle {
                         if self.spaceOf(window.id)?.kind == .fullscreen { return true }
-                        guard element.bool("AXFullScreen") == false else { return false }
+                        guard self.element(of: window)?.bool("AXFullScreen") == false else { return false }
                     }
-                    if item.perform(kAXPressAction) { return true }
+                    guard !self.cancellation.isCancelled else {
+                        CGEvent.keyPress(53)
+                        return false
+                    }
+                    let pressed = item.perform(kAXPressAction)
+                    self.log("  fullscreen menu window=\(window.id) command=\(command.rawValue) pressed=\(pressed)")
+                    if pressed { return true }
                 }
                 return false
             }
         )
+        if cancellation.isCancelled { return .skipped("cancelled") }
         Thread.sleep(forTimeInterval: 0.8)  // let the transition finish before the next space change
         refresh()
+        if result != .entered, menuFocusFailed {
+            return .failed("could not focus \(window) for its fullscreen command")
+        }
         switch result {
         case .entered: return .done
+        case .notFocused: return .failed("could not focus \(window) for its fullscreen command")
         case .unavailable:
             return .failed("the app has no settable fullscreen state and no usable Enter or Toggle Full Screen menu item")
         case .notConfirmed: return .failed("the window did not enter a fullscreen Space")
@@ -425,24 +467,9 @@ final class Restorer {
         let command = initiatingSide == .left ? "Left of Screen" : "Right of Screen"
         if let failure = placeOnAnchor([left, right], display: display, anchor: anchor) { return .failed(failure) }
         guard let liveDisplay = state.display(uuid: display) else { return .failed("display is not connected") }
-        var focusAttempts = 0
-        var lastFocusState = "not observed"
-        let ready = WindowCommandFocus.acquire(
-            canContinue: { !self.cancellation.isCancelled },
-            requestFocus: {
-                focusAttempts += 1
-                self.requestMenuFocus(initiator, attempt: focusAttempts)
-            },
-            isReady: {
-                self.menuCommandsReady(for: initiator, reportState: { lastFocusState = $0 })
-            },
-            waitUntilReady: { condition in
-                MissionControl.wait(timeout: 0.7, interval: 0.1, condition) == true
-            }
-        )
+        let ready = acquireMenuFocus(for: initiator, context: "Split View")
         if cancellation.isCancelled { return .skipped("cancelled") }
         guard ready else {
-            log("  Split View focus not confirmed after \(focusAttempts) request(s): \(lastFocusState)")
             return .failed("could not focus \(initiator) for its Full Screen Tile command")
         }
 
@@ -557,8 +584,18 @@ final class Restorer {
             space = spaceOf(window)
         }
         guard let space else { return .failed("the space no longer exists") }
-        return SpaceSwitcher.show(spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces }) != nil
-            ? .done : .failed("could not switch to the space")
+        let method = SpaceSwitcher.show(
+            spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces },
+            canContinue: { !self.cancellation.isCancelled }, trace: log
+        )
+        if cancellation.isCancelled { return .skipped("cancelled") }
+        if let method {
+            log("  space \(space.id) shown via \(method.rawValue)")
+            return .done
+        }
+        let active = SkyLight.managedSpaces().spaces.first { $0.displayUUID == uuid && $0.isActive }
+        log("  space switch not confirmed target=\(space.id) active=\(active.map { String($0.id) } ?? "unknown")")
+        return .failed("could not switch to the space")
     }
 
     /// Opens apps that have saved windows but none now, then waits until
@@ -608,7 +645,7 @@ final class Restorer {
                 self.log("checking matched windows on Space \(space.id)")
                 return SpaceSwitcher.show(
                     spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces },
-                    canContinue: { !self.cancellation.isCancelled }
+                    canContinue: { !self.cancellation.isCancelled }, trace: self.log
                 ) != nil
             },
             restoreSpace: { space, display, deadline in
@@ -616,7 +653,7 @@ final class Restorer {
                 // new operations; in-flight AX calls retain their own timeout.
                 return SpaceSwitcher.show(
                     spaceID: space.id, display: display, readSpaces: { SkyLight.managedSpaces().spaces },
-                    canContinue: { Date() < deadline }
+                    canContinue: { Date() < deadline }, trace: self.log
                 ) != nil
             },
             readSpaces: { SkyLight.managedSpaces().spaces },
@@ -730,14 +767,24 @@ final class Restorer {
         return nil
     }
 
-    private func raise(_ window: WindowTarget, _ element: AXElement) {
-        // activate() alone is only a request since macOS 14; AXFrontmost
-        // makes the app key so menu commands target this window
-        NSRunningApplication(processIdentifier: window.pid)?.activate(options: [])
-        AXElement.application(window.pid).setBool(kAXFrontmostAttribute, true)
-        element.setBool(kAXMainAttribute, true)
-        element.perform(kAXRaiseAction)
-        Thread.sleep(forTimeInterval: 0.3)
+    private func acquireMenuFocus(for window: WindowTarget, context: String) -> Bool {
+        var attempts = 0
+        var lastState = "not observed"
+        let ready = WindowCommandFocus.acquire(
+            canContinue: { !self.cancellation.isCancelled },
+            requestFocus: {
+                attempts += 1
+                self.requestMenuFocus(window, attempt: attempts)
+            },
+            isReady: { self.menuCommandsReady(for: window, reportState: { lastState = $0 }) },
+            waitUntilReady: { condition in
+                MissionControl.wait(timeout: 0.7, interval: 0.1, condition) == true
+            }
+        )
+        if !ready, !cancellation.isCancelled {
+            log("  \(context) focus not confirmed after \(attempts) attempt(s): \(lastState)")
+        }
+        return ready
     }
 
     private func requestMenuFocus(_ window: WindowTarget, attempt: Int) {

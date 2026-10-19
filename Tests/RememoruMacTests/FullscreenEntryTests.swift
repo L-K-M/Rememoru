@@ -153,5 +153,129 @@ final class FullscreenEntryTests: XCTestCase {
         XCTAssertEqual(result, .entered)
         XCTAssertEqual(commands, [.enter], "a late AX transition must be confirmed without toggling it back out")
     }
+
+    func testAlreadyFullscreenSkipsPreparation() {
+        var prepared = false
+        var setCalled = false
+        var menuCalled = false
+        let result = FullscreenEntry.run(
+            prepareMenu: { prepared = true; return true },
+            setFullscreen: { setCalled = true; return true },
+            readFullscreen: { XCTFail("confirmed fullscreen must not read AX state"); return true },
+            confirm: { timeout in XCTAssertEqual(timeout, 0); return true },
+            performMenu: { _ in menuCalled = true; return true }
+        )
+
+        XCTAssertEqual(result, .entered)
+        XCTAssertFalse(prepared, "already-confirmed fullscreen should never prepare")
+        XCTAssertFalse(setCalled, "already-confirmed fullscreen should not send requests")
+        XCTAssertFalse(menuCalled, "already-confirmed fullscreen should not send menu commands")
+    }
+
+    func testFailedMenuPreparationReturnsNotFocusedAfterAXAttempt() {
+        var setCalled = false
+        var readCalled = false
+        var menuCalled = false
+        var confirmations: [TimeInterval] = []
+        let result = FullscreenEntry.run(
+            prepareMenu: { false },
+            setFullscreen: { setCalled = true; return false },
+            readFullscreen: { readCalled = true; return false },
+            confirm: { timeout in confirmations.append(timeout); return false },
+            performMenu: { _ in menuCalled = true; return true }
+        )
+
+        XCTAssertEqual(result, .notFocused)
+        XCTAssertTrue(setCalled, "menu focus must not block the per-window AX setter")
+        XCTAssertTrue(readCalled, "check for a pending AX transition before menu preparation")
+        XCTAssertFalse(menuCalled, "failed preparation must prevent menu commands")
+        XCTAssertTrue(confirmations.allSatisfy { $0 == 0 })
+    }
+
+    func testPreparationPrecedesMenuFallback() {
+        var order: [String] = []
+        var entered = false
+        let result = FullscreenEntry.run(
+            prepareMenu: { order.append("prepare"); return true },
+            setFullscreen: { order.append("set"); return false },
+            readFullscreen: { false },
+            confirm: { _ in entered },
+            performMenu: { _ in order.append("menu"); entered = true; return true }
+        )
+
+        XCTAssertEqual(result, .entered)
+        XCTAssertEqual(order, ["set", "prepare", "menu"])
+    }
+
+    func testConfirmedAXRequestDoesNotRequireMenuFocus() {
+        var requested = false
+        var preparations = 0
+        let result = FullscreenEntry.run(
+            prepareMenu: { preparations += 1; return false },
+            setFullscreen: { requested = true; return true },
+            readFullscreen: { false },
+            confirm: { _ in requested },
+            performMenu: { _ in XCTFail("AX success must not use a menu"); return false }
+        )
+
+        XCTAssertEqual(result, .entered)
+        XCTAssertTrue(requested)
+        XCTAssertEqual(preparations, 0)
+    }
+
+    func testFailedMenuPreparationPreservesLateWindowServerSuccess() {
+        var entered = false
+        let result = FullscreenEntry.run(
+            prepareMenu: { entered = true; return false },
+            setFullscreen: { false },
+            readFullscreen: { false },
+            confirm: { _ in entered },
+            performMenu: { _ in XCTFail("failed focus must not use a menu"); return false }
+        )
+
+        XCTAssertEqual(result, .entered)
+    }
+
+    func testLateAXTransitionDuringTogglePreparationDoesNotToggleBackOut() {
+        var fullscreen = false
+        var preparations = 0
+        var commands: [FullscreenEntry.MenuCommand] = []
+        let result = FullscreenEntry.run(
+            prepareMenu: {
+                preparations += 1
+                fullscreen = preparations == 2
+                return true
+            },
+            setFullscreen: { false },
+            readFullscreen: { fullscreen },
+            confirm: { timeout in timeout > 0 && fullscreen },
+            performMenu: { commands.append($0); return false }
+        )
+
+        XCTAssertEqual(result, .entered)
+        XCTAssertEqual(preparations, 2)
+        XCTAssertEqual(commands, [.enter])
+    }
+
+    func testUnknownAXStateAfterTogglePreparationPreventsToggle() {
+        var fullscreen: Bool? = false
+        var preparations = 0
+        var commands: [FullscreenEntry.MenuCommand] = []
+        let result = FullscreenEntry.run(
+            prepareMenu: {
+                preparations += 1
+                if preparations == 2 { fullscreen = nil }
+                return true
+            },
+            setFullscreen: { false },
+            readFullscreen: { fullscreen },
+            confirm: { _ in false },
+            performMenu: { commands.append($0); return false }
+        )
+
+        XCTAssertEqual(result, .notConfirmed)
+        XCTAssertEqual(preparations, 2)
+        XCTAssertEqual(commands, [.enter])
+    }
 }
 #endif
