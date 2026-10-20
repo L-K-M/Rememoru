@@ -200,7 +200,10 @@ enum WeChatOpener {
                 // is not offered, click its verified hit target.
                 var currentIDs = Set<UInt32>()
                 return WeChatStartupClick.click(
-                    button: button, window: window, application: application, pid: pid,
+                    window: window, application: application, pid: pid,
+                    findButton: {
+                        openButton(in: window, deadline: openingDeadline, cancellation: cancellation)
+                    },
                     deadline: openingDeadline, cancellation: cancellation, reportFailure: reportFailure, isReady: {
                         let current = observation(
                             application: application, pid: pid, elements: elements,
