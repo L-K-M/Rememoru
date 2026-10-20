@@ -7,8 +7,16 @@ import RememoruCore
 /// WeChat's startup control can omit an accessibility press action.
 /// A mouse fallback must target the current button, never a saved coordinate.
 enum WeChatStartupClick {
+    private struct ClickTarget {
+        let button: AXElement
+        let frame: Rect
+        let labels: [String]
+
+        var point: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
+    }
+
     static func click(
-        button: AXElement, window: AXElement, application: AXElement, pid: pid_t,
+        window: AXElement, application: AXElement, pid: pid_t, findButton: () -> AXElement?,
         deadline: Date, cancellation: CancellationFlag, reportFailure: (String) -> Void = { _ in },
         isReady: () -> Bool
     ) -> Bool {
@@ -17,10 +25,11 @@ enum WeChatStartupClick {
             reportFailure(Date() >= deadline ? "the startup action timed out" : reason)
             return false
         }
-        guard canContinue(), let windowID = window.windowID, canContinue() else {
+        guard canContinue(), window.pid == pid, canContinue(),
+              let windowID = window.windowID, canContinue() else {
             return fail("the startup window is unavailable")
         }
-        if isReady() { return true }
+        if isReady() { return canContinue() }
         guard canContinue() else { return fail("the startup action was cancelled") }
 
         let pointer = CGEvent(source: nil)?.location
@@ -46,88 +55,144 @@ enum WeChatStartupClick {
         application.setBool(kAXFrontmostAttribute, true)
         guard canContinue() else { return fail("the startup action was cancelled") }
         window.perform(kAXRaiseAction)
-        guard canContinue(), MissionControl.wait(timeout: min(2, deadline.timeIntervalSinceNow), { () -> Bool? in
-            guard canContinue(), isFrontmost(pid), onscreenFrame(windowID: windowID, pid: pid) != nil else { return nil }
-            return true
-        }) != nil, canContinue() else { return fail("the startup window did not become frontmost and visible") }
-
-        // Switching Spaces can reveal a main window that was missing earlier.
-        if isReady() { return true }
-        guard canContinue(), let frame = button.frame, canContinue() else {
-            return fail("the startup button's frame is unavailable")
+        var mainReady = false
+        let visible = MissionControl.wait(timeout: min(2, deadline.timeIntervalSinceNow)) { () -> Bool? in
+            guard canContinue() else { return false }
+            mainReady = isReady()
+            guard canContinue() else { return false }
+            if mainReady { return true }
+            return isFrontmost(pid) && onscreenFrame(windowID: windowID, pid: pid) != nil ? true : nil
         }
-        guard let windowFrame = onscreenFrame(windowID: windowID, pid: pid) else {
-            return fail("the startup window is no longer visible")
-        }
-        guard valid(frame, inside: windowFrame) else {
-            return fail("the startup button is outside its visible window (button \(describe(frame)); window \(describe(windowFrame))); close Mission Control and retry")
-        }
-        let point = CGPoint(x: frame.midX, y: frame.midY)
-        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
-                                 mouseCursorPosition: point, mouseButton: .left),
-              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
-                               mouseCursorPosition: point, mouseButton: .left) else {
-            return fail("could not create the mouse click")
+        if mainReady && canContinue() { return true }
+        guard visible == true, canContinue() else {
+            if canContinue(), isReady(), canContinue() { return true }
+            return fail("the startup window did not become frontmost and visible")
         }
 
-        // Frontmost and onscreen flags can precede AX hit-test readiness
-        // during activation. Wait for the same exact system-wide target;
-        // an unrelated or covered control must never authorize a click.
-        var hitFailure = "the pointer target is not the Open WeChat button"
-        guard waitForHit(timeout: min(2, deadline.timeIntervalSinceNow), canContinue: canContinue, matches: {
-            hitMatches(button: button, at: point, canContinue: canContinue, reportMiss: { hitFailure = $0 })
-        }) else { return fail(hitFailure) }
-
-        // Re-read every action guard after waiting: the window or account
-        // panel may have changed while AX was becoming ready.
-        var labels: [String] = []
-        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
-            guard canContinue() else { return fail("the startup action was cancelled") }
-            if let label = button.string(attribute) { labels.append(label) }
-        }
-        guard canContinue(), button.frame == frame, canContinue(),
-              let currentWindowFrame = onscreenFrame(windowID: windowID, pid: pid),
-              valid(frame, inside: currentWindowFrame), canContinue() else {
-            return fail("the startup button or window moved before the click")
-        }
-        let isButton = button.role == kAXButtonRole
-        guard canContinue() else { return fail("the startup action was cancelled") }
-        let isEnabled = button.bool(kAXEnabledAttribute) == true
-        guard canContinue() else { return fail("the startup action was cancelled") }
-        let frontmost = isFrontmost(pid)
-        let targetMatches = hitMatches(button: button, at: point, canContinue: canContinue,
-                                       reportMiss: { hitFailure = $0 })
-        guard canContinue(), WeChatStartup.canClickOpenButton(
-            isButton: isButton, labels: labels, isEnabled: isEnabled,
-            isFrontmost: frontmost, isWindowOnscreen: true, hitMatchesButton: targetMatches
-        ), canContinue() else {
-            if !isButton || !WeChatStartup.isOpenButton(isButton: isButton, labels: labels) || !isEnabled {
-                return fail("the startup control is no longer the enabled Open WeChat button")
+        var lastFailure = "the pointer target is not the Open WeChat button"
+        func validatedTarget(_ button: AXElement, expectedFrame: Rect? = nil) -> ClickTarget? {
+            guard canContinue(), window.pid == pid, canContinue(), window.windowID == windowID,
+                  canContinue(), button.pid == pid, canContinue(), button.windowID == windowID,
+                  canContinue() else {
+                lastFailure = "the startup window or button is no longer available"
+                return nil
             }
-            if !frontmost { return fail("WeChat is no longer frontmost") }
-            return fail(hitFailure)
+            var labels: [String] = []
+            for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
+                guard canContinue() else { return nil }
+                if let label = button.string(attribute) { labels.append(label) }
+            }
+            guard canContinue() else { return nil }
+            let isButton = button.role == kAXButtonRole
+            guard canContinue() else { return nil }
+            let enabled = button.bool(kAXEnabledAttribute) == true
+            guard canContinue(), WeChatStartup.isOpenButton(isButton: isButton, labels: labels), enabled else {
+                lastFailure = "the startup control is no longer the enabled Open WeChat button"
+                return nil
+            }
+            guard isFrontmost(pid), canContinue() else {
+                lastFailure = "WeChat is no longer frontmost"
+                return nil
+            }
+            guard let frame = button.frame, canContinue() else {
+                lastFailure = "the startup button's frame is unavailable"
+                return nil
+            }
+            guard expectedFrame == nil || frame == expectedFrame else {
+                lastFailure = "the startup button moved before the click"
+                return nil
+            }
+            guard let windowFrame = onscreenFrame(windowID: windowID, pid: pid), canContinue() else {
+                lastFailure = "the startup window is no longer visible"
+                return nil
+            }
+            guard valid(frame, inside: windowFrame) else {
+                lastFailure = "the startup button is outside its visible window (button \(describe(frame)); window \(describe(windowFrame))); close Mission Control and retry"
+                return nil
+            }
+            return ClickTarget(button: button, frame: frame, labels: labels)
         }
 
-        down.setIntegerValueField(.mouseEventClickState, value: 1)
-        up.setIntegerValueField(.mouseEventClickState, value: 1)
-        down.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.05)
-        // Always release after posting down, including if cancellation arrives.
-        up.post(tap: .cghidEventTap)
-        return true
+        // Activation can move or replace a startup control. Each probe must
+        // rediscover it and hit-test its current frame, while a main window
+        // appearing during the wait needs no click at all.
+        let completed = performWhenReady(
+            timeout: min(2, deadline.timeIntervalSinceNow), canContinue: canContinue, isReady: isReady,
+            discover: { () -> ClickTarget? in
+                guard canContinue(), window.pid == pid, canContinue(), window.windowID == windowID,
+                      canContinue(), let button = findButton(), canContinue() else {
+                    lastFailure = "the startup window or button is no longer available"
+                    return nil
+                }
+                return validatedTarget(button)
+            },
+            matches: { target in
+                hitMatches(button: target.button, at: target.point, canContinue: canContinue,
+                           reportMiss: { lastFailure = $0 })
+            },
+            perform: { target in
+                // Re-read all guards after readiness checks, immediately
+                // before posting. Failed verification retries without a click.
+                guard let current = validatedTarget(target.button, expectedFrame: target.frame), canContinue() else {
+                    return false
+                }
+                let frontmost = isFrontmost(pid)
+                guard frontmost, canContinue() else {
+                    lastFailure = "WeChat is no longer frontmost"
+                    return false
+                }
+                let hit = hitMatches(button: current.button, at: current.point, canContinue: canContinue,
+                                     reportMiss: { lastFailure = $0 })
+                guard canContinue(), WeChatStartup.canClickOpenButton(
+                    isButton: true, labels: current.labels, isEnabled: true,
+                    isFrontmost: frontmost, isWindowOnscreen: true, hitMatchesButton: hit
+                ), canContinue() else { return false }
+                guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
+                                         mouseCursorPosition: current.point, mouseButton: .left),
+                      let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
+                                       mouseCursorPosition: current.point, mouseButton: .left), canContinue() else {
+                    lastFailure = "could not create the mouse click"
+                    return false
+                }
+                down.setIntegerValueField(.mouseEventClickState, value: 1)
+                up.setIntegerValueField(.mouseEventClickState, value: 1)
+                down.post(tap: .cghidEventTap)
+                Thread.sleep(forTimeInterval: 0.05)
+                // Always release after posting down, including cancellation.
+                up.post(tap: .cghidEventTap)
+                return true
+            }
+        )
+        return completed || fail(lastFailure)
     }
 
-    static func waitForHit(
+    static func performWhenReady<Target>(
         timeout: TimeInterval, interval: TimeInterval = 0.05,
-        canContinue: () -> Bool, matches: () -> Bool
+        canContinue: () -> Bool, isReady: () -> Bool, discover: () -> Target?,
+        matches: (Target) -> Bool, perform: (Target) -> Bool
     ) -> Bool {
-        let confirmed = MissionControl.wait(timeout: timeout, interval: interval) { () -> Bool? in
+        let completed = MissionControl.wait(timeout: timeout, interval: interval) { () -> Bool? in
             guard canContinue() else { return false }
-            let matched = matches()
+            let ready = isReady()
             guard canContinue() else { return false }
-            return matched ? true : nil
+            if ready { return true }
+            let discovered = discover()
+            guard canContinue() else { return false }
+            guard let target = discovered else { return nil }
+            let matched = matches(target)
+            guard canContinue() else { return false }
+            guard matched else { return nil }
+            let readyBeforeAction = isReady()
+            guard canContinue() else { return false }
+            if readyBeforeAction { return true }
+            let performed = perform(target)
+            guard canContinue() else { return false }
+            return performed ? true : nil
         }
-        return confirmed == true && canContinue()
+        if completed == true { return canContinue() }
+        guard canContinue() else { return false }
+        let ready = isReady()
+        return ready && canContinue()
     }
 
     private static func isFrontmost(_ pid: pid_t) -> Bool {

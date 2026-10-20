@@ -3,9 +3,127 @@ import XCTest
 @testable import RememoruMac
 
 final class WeChatStartupClickTests: XCTestCase {
+    func testRediscoversMovedOrReplacedTargetBeforeClicking() {
+        var discoveries = 0
+        var clicked: [Int] = []
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 1, interval: 0, canContinue: { true }, isReady: { false },
+            discover: { discoveries += 1; return discoveries },
+            matches: { $0 == 2 }, perform: { clicked.append($0); return true }
+        )
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(discoveries, 2)
+        XCTAssertEqual(clicked, [2])
+    }
+
+    func testMainWindowArrivingAfterHitMissNeedsNoClick() {
+        var ready = false
+        var clicked = false
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 1, interval: 0, canContinue: { true }, isReady: { ready },
+            discover: { 1 }, matches: { _ in ready = true; return false },
+            perform: { _ in clicked = true; return true }
+        )
+
+        XCTAssertTrue(result)
+        XCTAssertFalse(clicked)
+    }
+
+    func testPersistentUnrelatedTargetNeverClicks() {
+        var clicked = false
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 0.001, interval: 0, canContinue: { true }, isReady: { false },
+            discover: { 1 }, matches: { _ in false }, perform: { _ in clicked = true; return true }
+        )
+
+        XCTAssertFalse(result)
+        XCTAssertFalse(clicked)
+    }
+
+    func testChecksReadinessAgainAfterTheHitWaitExpires() {
+        var readinessChecks = 0
+        var clicked = false
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 0, interval: 0, canContinue: { true }, isReady: {
+                readinessChecks += 1
+                return readinessChecks == 2
+            },
+            discover: { 1 }, matches: { _ in false }, perform: { _ in clicked = true; return true }
+        )
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(readinessChecks, 2)
+        XCTAssertFalse(clicked)
+    }
+
+    func testMainWindowArrivingAfterExactHitPreventsClick() {
+        var readinessChecks = 0
+        var clicked = false
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 1, canContinue: { true }, isReady: {
+                readinessChecks += 1
+                return readinessChecks == 2
+            },
+            discover: { 1 }, matches: { _ in true }, perform: { _ in clicked = true; return true }
+        )
+
+        XCTAssertTrue(result)
+        XCTAssertFalse(clicked)
+    }
+
+    func testFailedFinalVerificationRediscoversBeforeRetrying() {
+        var discoveries = 0
+        var clicked: [Int] = []
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 1, interval: 0, canContinue: { true }, isReady: { false },
+            discover: { discoveries += 1; return discoveries }, matches: { _ in true },
+            perform: { target in
+                guard target == 2 else { return false }
+                clicked.append(target)
+                return true
+            }
+        )
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(discoveries, 2)
+        XCTAssertEqual(clicked, [2])
+    }
+
+    func testCancellationDuringRediscoveryPreventsHitLookupAndClick() {
+        var allowed = true
+        var hits = 0
+        var clicked = false
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 0.01, interval: 0, canContinue: { allowed }, isReady: { false },
+            discover: { allowed = false; return 1 },
+            matches: { _ in hits += 1; return true },
+            perform: { _ in clicked = true; return true }
+        )
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(hits, 0)
+        XCTAssertFalse(clicked)
+    }
+
+    func testCancellationDuringMainReadinessPreventsSuccessAndClick() {
+        var allowed = true
+        var discoveries = 0
+        var clicked = false
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 1, canContinue: { allowed }, isReady: { allowed = false; return true },
+            discover: { discoveries += 1; return 1 }, matches: { _ in true },
+            perform: { _ in clicked = true; return true }
+        )
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(discoveries, 0)
+        XCTAssertFalse(clicked)
+    }
+
     func testWaitsForExactHitAfterTransientMisses() {
         var probes = 0
-        let confirmed = WeChatStartupClick.waitForHit(timeout: 0.1, interval: 0, canContinue: { true }) {
+        let confirmed = waitForHit(timeout: 1, interval: 0, canContinue: { true }) {
             probes += 1
             return probes == 3
         }
@@ -15,14 +133,14 @@ final class WeChatStartupClickTests: XCTestCase {
     }
 
     func testNeverAcceptsAnUnrelatedHit() {
-        XCTAssertFalse(WeChatStartupClick.waitForHit(timeout: 0.001, interval: 0, canContinue: { true }) {
+        XCTAssertFalse(waitForHit(timeout: 0.001, interval: 0, canContinue: { true }) {
             false
         })
     }
 
     func testReadyHitNeedsOnlyOneLookup() {
         var probes = 0
-        XCTAssertTrue(WeChatStartupClick.waitForHit(timeout: 1, canContinue: { true }) {
+        XCTAssertTrue(waitForHit(timeout: 1, canContinue: { true }) {
             probes += 1
             return true
         })
@@ -31,7 +149,7 @@ final class WeChatStartupClickTests: XCTestCase {
 
     func testCancellationPreventsHitLookup() {
         var probes = 0
-        XCTAssertFalse(WeChatStartupClick.waitForHit(timeout: 1, canContinue: { false }) {
+        XCTAssertFalse(waitForHit(timeout: 1, canContinue: { false }) {
             probes += 1
             return true
         })
@@ -41,7 +159,7 @@ final class WeChatStartupClickTests: XCTestCase {
     func testCancellationDuringLookupPreventsConfirmation() {
         var allowed = true
         var probes = 0
-        XCTAssertFalse(WeChatStartupClick.waitForHit(timeout: 1, canContinue: { allowed }) {
+        XCTAssertFalse(waitForHit(timeout: 1, canContinue: { allowed }) {
             probes += 1
             allowed = false
             return true
@@ -52,12 +170,22 @@ final class WeChatStartupClickTests: XCTestCase {
     func testCancellationAfterMissStopsRetrying() {
         var allowed = true
         var probes = 0
-        XCTAssertFalse(WeChatStartupClick.waitForHit(timeout: 1, interval: 0, canContinue: { allowed }) {
+        XCTAssertFalse(waitForHit(timeout: 1, interval: 0, canContinue: { allowed }) {
             probes += 1
             allowed = false
             return false
         })
         XCTAssertEqual(probes, 1)
+    }
+
+    private func waitForHit(
+        timeout: TimeInterval, interval: TimeInterval = 0.05,
+        canContinue: () -> Bool, matches: () -> Bool
+    ) -> Bool {
+        WeChatStartupClick.performWhenReady(
+            timeout: timeout, interval: interval, canContinue: canContinue, isReady: { false },
+            discover: { true }, matches: { _ in matches() }, perform: { _ in true }
+        )
     }
 }
 #endif

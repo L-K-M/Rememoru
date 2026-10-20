@@ -23,6 +23,7 @@ enum SpaceSwitcher {
         spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace],
         canContinue: @escaping () -> Bool = { true },
         ensureMissionControlClosed: (() -> Bool)? = nil,
+        performSwipe: (Int, LiveDisplay) -> Void = swipe,
         showMissionControl: (UInt32, () -> Int?) -> Bool = { MissionControl.showSpace(display: $0, index: $1) },
         trace: (String) -> Void = { _ in }
     ) -> Method? {
@@ -59,35 +60,43 @@ enum SpaceSwitcher {
         trace("  space switch target=\(spaceID) active=\(initial.first(where: \.isActive).map { String($0.id) } ?? "unknown")"
             + " count=\(initial.count)")
 
-        // Dock processes gestures asynchronously. Confirm each hop before
-        // sending another, and recalculate after Spaces are reordered or
-        // removed by a fullscreen transition. Bound retries if state keeps
-        // changing while the restore runs.
-        for _ in 0..<initial.count {
+        var traversal = initial.first(where: \.isActive).flatMap {
+            SpaceTraversal(orderedIDs: initial.map(\.id), activeID: $0.id, targetID: spaceID)
+        }
+        // The reported array can disagree with Dock's navigation order.
+        // Confirm actual IDs and keep sweeping in one direction until an
+        // edge, rather than reversing whenever a reported index is crossed.
+        while let direction = traversal?.nextDirection() {
             guard canContinue() else { return nil }
             let spaces = current()
-            guard let target = spaces.firstIndex(where: { $0.id == spaceID }),
-                  let active = spaces.firstIndex(where: \.isActive) else { break }
-            if active == target { return finished(.gesture) }
-            let previousID = spaces[active].id
+            guard spaces.contains(where: { $0.id == spaceID }),
+                  let previousID = spaces.first(where: \.isActive)?.id else { break }
+            if previousID == spaceID { return finished(.gesture) }
             var observedID: UInt64?
             guard canContinue() else { return nil }
-            swipe(steps: target > active ? 1 : -1, on: display)
-            guard MissionControl.wait(timeout: 1.5, { () -> Bool? in
+            performSwipe(direction.rawValue, display)
+            let changed = MissionControl.wait(timeout: 1.5, { () -> Bool? in
                 guard canContinue() else { return false }
                 guard let activeID = current().first(where: \.isActive)?.id,
                       activeID != previousID else { return nil }
                 observedID = activeID
                 return true
-            }) == true else {
+            }) == true
+            guard canContinue() else { return nil }
+            if !changed {
                 trace("  space switch gesture from=\(previousID): no active-Space change confirmed")
-                break
+            } else {
+                trace("  space switch gesture from=\(previousID) to=\(observedID.map { String($0) } ?? "unknown")")
             }
-            trace("  space switch gesture from=\(previousID) to=\(observedID.map { String($0) } ?? "unknown")")
+            if traversal?.observe(from: previousID, to: observedID, orderedIDs: spaces.map(\.id)) != true { break }
         }
         guard canContinue() else { return nil }
         if isShown() { return finished(.gesture) }
         guard canContinue() else { return nil }
+        guard traversal?.orderMatchesNavigation != false else {
+            trace("  space switch target=\(spaceID): Dock order differs; refusing an ambiguous thumbnail index")
+            return nil
+        }
         // A thumbnail press can change the Space even when Mission Control's
         // closing wait times out. Allow WindowServer's active state to catch up.
         let missionControlResult = showMissionControl(display.id, {

@@ -5,6 +5,91 @@ import XCTest
 @testable import RememoruMac
 
 final class SpaceSwitcherTests: XCTestCase {
+    func testGestureSearchUsesActualIDsWhenDockOrderDiffers() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let reported: [UInt64] = [12, 39, 94, 87, 50, 80, 75]
+        let dock: [UInt64] = [12, 39, 50, 75, 80, 87, 94]
+        var active = 0
+        var hops: [UInt64] = []
+        let method = SpaceSwitcher.show(
+            spaceID: 80, display: display,
+            readSpaces: {
+                reported.enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == dock[active])
+                }
+            },
+            ensureMissionControlClosed: { true },
+            performSwipe: { direction, _ in
+                active = min(max(active + direction, 0), dock.count - 1)
+                hops.append(dock[active])
+            },
+            showMissionControl: { _, _ in
+                XCTFail("Unreliable Space order cannot identify a Mission Control thumbnail")
+                return false
+            }
+        )
+
+        XCTAssertEqual(method, .gesture)
+        XCTAssertEqual(dock[active], 80)
+        XCTAssertEqual(hops, [39, 50, 75, 80])
+    }
+
+    func testGestureSearchReversesAtEdgeWhenInitialHintIsWrong() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let reported: [UInt64] = [12, 39, 94, 87, 50, 80, 75]
+        let dock: [UInt64] = [12, 39, 50, 75, 80, 87, 94]
+        var active = 2
+        var directions: [Int] = []
+        let method = SpaceSwitcher.show(
+            spaceID: 94, display: display,
+            readSpaces: {
+                reported.enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == dock[active])
+                }
+            },
+            ensureMissionControlClosed: { true },
+            performSwipe: { direction, _ in
+                directions.append(direction)
+                active = min(max(active + direction, 0), dock.count - 1)
+            },
+            showMissionControl: { _, _ in XCTFail("The ID sweep should find the target"); return false }
+        )
+
+        XCTAssertEqual(method, .gesture)
+        XCTAssertEqual(dock[active], 94)
+        XCTAssertEqual(directions, [-1, -1, -1, 1, 1, 1, 1, 1, 1])
+    }
+
+    func testUnreachableTargetWithMismatchedOrderDoesNotSelectThumbnail() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let reported: [UInt64] = [12, 39, 94, 87, 50, 80, 75]
+        let dock: [UInt64] = [12, 39, 50, 75]
+        var active = 0
+        var swipes = 0
+        var thumbnailRequests = 0
+        let method = SpaceSwitcher.show(
+            spaceID: 80, display: display,
+            readSpaces: {
+                reported.enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == dock[active])
+                }
+            },
+            ensureMissionControlClosed: { true },
+            performSwipe: { direction, _ in
+                swipes += 1
+                active = min(max(active + direction, 0), dock.count - 1)
+            },
+            showMissionControl: { _, _ in thumbnailRequests += 1; return false }
+        )
+
+        XCTAssertNil(method)
+        XCTAssertEqual(thumbnailRequests, 0)
+        XCTAssertEqual(swipes, 8)
+    }
+
     func testSwipeEventTargetsRequestedDisplay() throws {
         let initial = try XCTUnwrap(CGEvent(source: nil)).location
         let destination = CGPoint(x: initial.x + 2000, y: initial.y - 500)
