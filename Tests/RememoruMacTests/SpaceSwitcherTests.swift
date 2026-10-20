@@ -5,6 +5,33 @@ import XCTest
 @testable import RememoruMac
 
 final class SpaceSwitcherTests: XCTestCase {
+    func testGestureSearchRecoversActiveSpaceAfterInitialSnapshot() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        var reads = 0
+        var activeID: UInt64 = 1
+        var swipes = 0
+        let method = SpaceSwitcher.show(
+            spaceID: 2, display: display,
+            readSpaces: {
+                reads += 1
+                return [1, 2].enumerated().map { index, id in
+                    LiveSpace(id: UInt64(id), key: String(id), kind: .desktop, displayUUID: "D",
+                              index: index, isActive: reads > 2 && UInt64(id) == activeID)
+                }
+            },
+            ensureMissionControlClosed: { true },
+            performSwipe: { direction, _ in
+                XCTAssertEqual(direction, 1)
+                swipes += 1
+                activeID = 2
+            },
+            showMissionControl: { _, _ in XCTFail("Recovered active state should allow gestures"); return false }
+        )
+
+        XCTAssertEqual(method, .gesture)
+        XCTAssertEqual(swipes, 1)
+    }
+
     func testGestureSearchUsesActualIDsWhenDockOrderDiffers() {
         let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
         let reported: [UInt64] = [12, 39, 94, 87, 50, 80, 75]

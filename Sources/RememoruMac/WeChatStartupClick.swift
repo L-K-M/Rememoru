@@ -171,6 +171,7 @@ enum WeChatStartupClick {
         canContinue: () -> Bool, isReady: () -> Bool, discover: () -> Target?,
         matches: (Target) -> Bool, perform: (Target) -> Bool
     ) -> Bool {
+        var actionDelivered = false
         let completed = MissionControl.wait(timeout: timeout, interval: interval) { () -> Bool? in
             guard canContinue() else { return false }
             let ready = isReady()
@@ -185,10 +186,13 @@ enum WeChatStartupClick {
             let readyBeforeAction = isReady()
             guard canContinue() else { return false }
             if readyBeforeAction { return true }
-            let performed = perform(target)
+            actionDelivered = perform(target)
+            if actionDelivered { return true }
             guard canContinue() else { return false }
-            return performed ? true : nil
+            return nil
         }
+        // Cancellation during mouse-up release cannot undo a delivered click.
+        if actionDelivered { return true }
         if completed == true { return canContinue() }
         guard canContinue() else { return false }
         let ready = isReady()

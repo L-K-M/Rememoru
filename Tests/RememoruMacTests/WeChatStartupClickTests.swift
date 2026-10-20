@@ -90,6 +90,34 @@ final class WeChatStartupClickTests: XCTestCase {
         XCTAssertEqual(clicked, [2])
     }
 
+    func testDeliveredClickRemainsSuccessfulIfCancellationArrivesDuringRelease() {
+        var allowed = true
+        var readinessChecks = 0
+        var actions = 0
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 1, interval: 0, canContinue: { allowed },
+            isReady: { readinessChecks += 1; return false },
+            discover: { 1 }, matches: { _ in true },
+            perform: { _ in actions += 1; allowed = false; return true }
+        )
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(actions, 1)
+        XCTAssertEqual(readinessChecks, 2)
+    }
+
+    func testPersistentFinalVerificationFailureNeverReportsSuccess() {
+        var rejectedActions = 0
+        let result = WeChatStartupClick.performWhenReady(
+            timeout: 0.001, interval: 0, canContinue: { true }, isReady: { false },
+            discover: { 1 }, matches: { _ in true },
+            perform: { _ in rejectedActions += 1; return false }
+        )
+
+        XCTAssertFalse(result)
+        XCTAssertGreaterThan(rejectedActions, 0)
+    }
+
     func testCancellationDuringRediscoveryPreventsHitLookupAndClick() {
         var allowed = true
         var hits = 0

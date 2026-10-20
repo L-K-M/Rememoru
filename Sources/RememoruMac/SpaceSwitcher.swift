@@ -60,18 +60,25 @@ enum SpaceSwitcher {
         trace("  space switch target=\(spaceID) active=\(initial.first(where: \.isActive).map { String($0.id) } ?? "unknown")"
             + " count=\(initial.count)")
 
-        var traversal = initial.first(where: \.isActive).flatMap {
-            SpaceTraversal(orderedIDs: initial.map(\.id), activeID: $0.id, targetID: spaceID)
-        }
+        var traversal: SpaceTraversal?
         // The reported array can disagree with Dock's navigation order.
         // Confirm actual IDs and keep sweeping in one direction until an
         // edge, rather than reversing whenever a reported index is crossed.
-        while let direction = traversal?.nextDirection() {
+        while true {
             guard canContinue() else { return nil }
             let spaces = current()
-            guard spaces.contains(where: { $0.id == spaceID }),
-                  let previousID = spaces.first(where: \.isActive)?.id else { break }
+            guard spaces.contains(where: { $0.id == spaceID }) else { break }
+            guard let previousID = spaces.first(where: \.isActive)?.id else {
+                trace("  space switch target=\(spaceID): no active Space available for gestures")
+                break
+            }
             if previousID == spaceID { return finished(.gesture) }
+            // A transition can omit the active flag in the initial read.
+            // Initialize from this fresh state before consuming a hop.
+            if traversal == nil {
+                traversal = SpaceTraversal(orderedIDs: spaces.map(\.id), activeID: previousID, targetID: spaceID)
+            }
+            guard let direction = traversal?.nextDirection() else { break }
             var observedID: UInt64?
             guard canContinue() else { return nil }
             performSwipe(direction.rawValue, display)
