@@ -60,6 +60,7 @@ public struct SpaceOrderSurvey {
     private var direction = Direction.left
     private var visitedLeft: Set<UInt64>
     private var visitedRight: [UInt64] = []
+    private var awaitingEdgeConfirmation = false
     private var remaining: Int
 
     public init?(knownIDs: [UInt64], activeID: UInt64) {
@@ -68,7 +69,7 @@ public struct SpaceOrderSurvey {
         self.knownIDs = known
         self.activeID = activeID
         visitedLeft = [activeID]
-        remaining = known.count * 2
+        remaining = known.count * 2 + 2
         if known.count == 1 { order = [activeID] }
     }
 
@@ -79,20 +80,27 @@ public struct SpaceOrderSurvey {
         return direction
     }
 
-    /// The same ID confirms an edge after a timed hop wait. Missing or
-    /// unexpected IDs never count as a boundary or a successful survey.
+    /// Two stationary hops confirm the left edge. A single dropped gesture
+    /// must not reverse a sweep. Missing or unexpected IDs never count as
+    /// a boundary, and the right sweep must still visit every known Space.
     public mutating func observe(activeID next: UInt64?) -> Bool {
-        guard order == nil, !failed, let next, knownIDs.contains(next) else {
+        guard order == nil, !failed else { return order != nil }
+        guard let next, knownIDs.contains(next) else {
             failed = true
             return false
         }
         switch direction {
         case .left:
             if next == activeID {
-                direction = .right
-                visitedRight = [next]
-            } else if !visitedLeft.insert(next).inserted {
-                failed = true
+                if awaitingEdgeConfirmation {
+                    direction = .right
+                    visitedRight = [next]
+                } else {
+                    awaitingEdgeConfirmation = true
+                }
+            } else {
+                awaitingEdgeConfirmation = false
+                if !visitedLeft.insert(next).inserted { failed = true }
             }
         case .right:
             if next == activeID || visitedRight.contains(next) {

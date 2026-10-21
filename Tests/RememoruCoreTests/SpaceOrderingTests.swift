@@ -13,7 +13,7 @@ final class SpaceOrderingTests: XCTestCase {
         for move in moves {
             guard let idx = working.firstIndex(of: move.spaceID) else { XCTFail(); continue }
             working.remove(at: idx)
-            let beforeIdx = working.firstIndex(of: move.beforeID) ?? 0
+            let beforeIdx = try XCTUnwrap(working.firstIndex(of: move.beforeID))
             working.insert(move.spaceID, at: beforeIdx)
             XCTAssertEqual(working, move.expectedOrder)
         }
@@ -51,9 +51,11 @@ final class SpaceOrderingTests: XCTestCase {
         let known: [UInt64] = [12, 39, 94, 87, 50, 80, 75]
         var survey = try XCTUnwrap(SpaceOrderSurvey(knownIDs: known, activeID: 50))
 
-        // Consume left: 39, 12, then 12 again (edge — stays at 12)
+        // Consume left: 39, 12, then two consecutive stationary 12 observations confirm left edge
         XCTAssertEqual(survey.nextDirection(), .left)
         XCTAssertTrue(survey.observe(activeID: 39))
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 12))
         XCTAssertEqual(survey.nextDirection(), .left)
         XCTAssertTrue(survey.observe(activeID: 12))
         XCTAssertEqual(survey.nextDirection(), .left)
@@ -96,14 +98,82 @@ final class SpaceOrderingTests: XCTestCase {
         XCTAssertTrue(survey.failed)
     }
 
+    // Regression: stationary ID mid-left-sweep followed by movement must continue left
+    func testSurveyStationaryMidLeftSweepContinuesLeft() throws {
+        var survey = try XCTUnwrap(SpaceOrderSurvey(knownIDs: [10, 20, 30], activeID: 20))
+        // A dropped gesture at 20 must not declare it the left edge.
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 20))
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        // Movement resets confirmation: 10 needs two stationary hops.
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        XCTAssertEqual(survey.nextDirection(), .right)
+        XCTAssertTrue(survey.observe(activeID: 20))
+        XCTAssertEqual(survey.nextDirection(), .right)
+        XCTAssertTrue(survey.observe(activeID: 30))
+        XCTAssertEqual(survey.order, [10, 20, 30])
+        XCTAssertFalse(survey.failed)
+    }
+
+    // Regression: starting at leftmost10 requires two stationary10 observations before right sweep
+    func testSurveyStartAtLeftmostNeedsTwoStationary() throws {
+        var survey = try XCTUnwrap(SpaceOrderSurvey(knownIDs: [10, 20, 30], activeID: 10))
+        // First stationary 10
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        // Second stationary 10 confirms left edge
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        // Now sweep right
+        XCTAssertEqual(survey.nextDirection(), .right)
+        XCTAssertTrue(survey.observe(activeID: 20))
+        XCTAssertEqual(survey.nextDirection(), .right)
+        XCTAssertTrue(survey.observe(activeID: 30))
+        XCTAssertEqual(survey.order, [10, 20, 30])
+        XCTAssertFalse(survey.failed)
+    }
+
+    // Regression: completed surveys remain successful when observed again
+    func testSurveyCompletedRemainsSuccessfulOnReobserve() throws {
+        var survey = try XCTUnwrap(SpaceOrderSurvey(knownIDs: [10, 20, 30], activeID: 10))
+        // Two stationary 10 to confirm left edge
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        // Right sweep
+        XCTAssertEqual(survey.nextDirection(), .right)
+        XCTAssertTrue(survey.observe(activeID: 20))
+        XCTAssertEqual(survey.nextDirection(), .right)
+        XCTAssertTrue(survey.observe(activeID: 30))
+        XCTAssertEqual(survey.order, [10, 20, 30])
+        XCTAssertFalse(survey.failed)
+        // Re-observing after completion preserves order and failed=false
+        XCTAssertTrue(survey.observe(activeID: 10))
+        XCTAssertEqual(survey.order, [10, 20, 30])
+        XCTAssertFalse(survey.failed)
+        XCTAssertTrue(survey.observe(activeID: 20))
+        XCTAssertEqual(survey.order, [10, 20, 30])
+        XCTAssertFalse(survey.failed)
+    }
+
     func testSurveyEarlyRightEdgeFails() throws {
         var survey = try XCTUnwrap(SpaceOrderSurvey(knownIDs: [10, 20, 30], activeID: 10))
-        XCTAssertTrue(survey.observe(activeID: 20))
-        XCTAssertTrue(survey.observe(activeID: 30))
-        XCTAssertTrue(survey.observe(activeID: 30))
-        XCTAssertFalse(survey.failed)
+        // Two consecutive stationary 10 observations confirm left edge
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+        XCTAssertEqual(survey.nextDirection(), .left)
+        XCTAssertTrue(survey.observe(activeID: 10))
+
+        // The right edge arrives before known Space 30 was visited.
         XCTAssertEqual(survey.nextDirection(), .right)
-        XCTAssertFalse(survey.observe(activeID: 30))
+        XCTAssertTrue(survey.observe(activeID: 20))
+        XCTAssertEqual(survey.nextDirection(), .right)
+        XCTAssertFalse(survey.observe(activeID: 20))
         XCTAssertTrue(survey.failed)
     }
 
@@ -119,12 +189,14 @@ final class SpaceOrderingTests: XCTestCase {
     }
 
     func testSurveyBoundedNextDirection() throws {
+        // Budget = known.count * 2 + 2 = 2 * 2 + 2 = 6
         var survey = try XCTUnwrap(SpaceOrderSurvey(knownIDs: [10, 20], activeID: 10))
-        for _ in 0..<5 {
-            _ = survey.nextDirection()
+        for _ in 0..<6 {
+            XCTAssertEqual(survey.nextDirection(), .left)
         }
-        XCTAssertTrue(survey.failed)
+        XCTAssertFalse(survey.failed)
         XCTAssertNil(survey.nextDirection())
+        XCTAssertTrue(survey.failed)
     }
 
     // MARK: - SpaceDragGeometry.path
