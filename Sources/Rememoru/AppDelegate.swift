@@ -152,13 +152,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         saving = true
         lastResult = "Saving…"
         queue.async { [weak self] in
-            let snapshot = service.captureSnapshot()
-            let saved = Result { try service.store.save(snapshot) }
+            let saved = Result {
+                let snapshot = try service.captureSnapshot()
+                return (snapshot, try service.store.save(snapshot))
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.saving = false
                 switch saved {
-                case .success(let url):
+                case .success(let (snapshot, url)):
                     service.logFile.write("saved \(snapshot.windows.count) window(s) to \(url.lastPathComponent)")
                     self.lastResult = "Saved \(snapshot.windows.count) windows on \(snapshot.spaces.count) spaces"
                 case .failure(let error):

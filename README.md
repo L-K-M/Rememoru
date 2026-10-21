@@ -39,6 +39,9 @@ Click the menu bar icon:
 
 - **Save Current Layout** (⌘S) writes a snapshot to
   `~/Library/Application Support/Rememoru/Snapshots/`.
+  Saving briefly visits the Spaces on each display to verify their visible
+  order, then returns to the original Spaces. Leave the Mac idle until it
+  finishes. An unverified order is reported as a save failure.
 - **Restore Latest Layout** (⌘R), or pick an older one under **Restore**.
   Rememoru reports what it could not restore, with a link to the log.
 - **Restore Latest Layout at Login** registers Rememoru as a login item.
@@ -68,6 +71,9 @@ app apart.
   untested there.
 - System Settings > Desktop & Dock > "Displays have separate Spaces" must
   be **on**.
+- "Automatically rearrange Spaces based on most recent use" must be **off**
+  so saving and restoring can preserve a fixed order. Accessibility is
+  required to verify that order.
 - Stage Manager is not supported.
 
 ## What a restore does
@@ -95,8 +101,11 @@ checking each one against WindowServer before counting it as done:
    pairs** (Window > Full Screen Tile > Left of Screen, then a click on
    the partner window in the picker). Each window starts from the desktop
    its space followed, so the new space lands in the right place.
-7. **Restore the order of Spaces** where fullscreen or Split View spaces
-   sit between desktops (`SLSBridgedMoveManagedSpaceToDisplayIndexOperation`).
+7. **Restore the order of Spaces** by dragging Mission Control thumbnails
+   into insertion gaps. Rememoru surveys the Dock's actual navigation order
+   before and after each move, and preserves the final slots of Spaces
+   absent from the snapshot. WindowServer's reported array alone does not
+   prove that the visible order changed.
 8. **Show the Space that was active** on each display, with the same
    synthetic Dock-swipe gesture yabai uses. Mission Control is the
    fallback.

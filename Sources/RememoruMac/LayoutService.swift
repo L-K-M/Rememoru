@@ -13,9 +13,19 @@ public final class LayoutService {
         self.logFile = logFile
     }
 
-    public func captureSnapshot() -> Snapshot {
+    public func captureSnapshot() throws -> Snapshot {
         let state = LiveReader().read()
-        return SnapshotBuilder.build(from: state, created: SnapshotStore.timestamp())
+        var orders: [String: [UInt64]] = [:]
+        for display in state.displays {
+            let original = state.spaces(onDisplay: display.uuid).filter { $0.kind.isRestorable }
+            orders[display.uuid] = try SpaceOrderRestorer.captureOrder(display: display, original: original)
+        }
+        guard SpaceOrderRestorer.captureStillValid(state),
+              let ordered = SpaceOrdering.applying(orders, to: state) else {
+            throw NSError(domain: "Rememoru.SpaceOrder", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Space membership changed while saving. Try again."])
+        }
+        return SnapshotBuilder.build(from: ordered, created: SnapshotStore.timestamp())
     }
 
     /// Runs a restore synchronously; call it off the main thread. `echo`
@@ -64,8 +74,8 @@ public final class LayoutService {
                   detail: "else displays are matched by enumeration order"),
             Check(name: "window moves (SLSBridgedMoveWindowsToManagedSpaceOperation)",
                   ok: BridgedOperations.canMoveWindows, detail: "needed to put windows on their desktops"),
-            Check(name: "space order (SLSBridgedMoveManagedSpaceToDisplayIndexOperation)",
-                  ok: BridgedOperations.canMoveSpaces, detail: "needed to reorder fullscreen spaces"),
+            Check(name: "fixed Space order", ok: SpaceOrderRestorer.hasFixedOrder,
+                  detail: "turn off Automatically rearrange Spaces based on most recent use in Desktop & Dock"),
             Check(name: "_AXUIElementGetWindow", ok: HIServicesPrivate.getWindow != nil,
                   detail: "ties accessibility elements to window ids"),
             Check(name: "_AXUIElementCreateWithRemoteToken", ok: HIServicesPrivate.createWithRemoteToken != nil,

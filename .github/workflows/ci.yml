@@ -39,6 +39,12 @@ jobs:
           swift --version
           scripts/build.sh --clean
 
+      - name: Use a fixed Space order
+        run: |
+          defaults write com.apple.dock mru-spaces -bool false
+          killall Dock || true
+          sleep 2
+
       # Runners have a real WindowServer session; this exercises the
       # read-only paths and prints which private APIs resolve there. doctor
       # exits 1 without Accessibility; anything else (a crash) fails.
