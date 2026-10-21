@@ -123,7 +123,7 @@ enum SpaceSwitcher {
     /// Posts `abs(steps)` Dock-swipe gestures on a display; negative steps
     /// go left. Field numbers are private CGEvent fields (see yabai's
     /// space_manager_focus_space_using_gesture).
-    private static func swipe(steps: Int, on display: LiveDisplay) {
+    static func swipe(steps: Int, on display: LiveDisplay) {
         let point = CGPoint(x: display.frame.midX, y: display.frame.midY)
         guard steps != 0, let event = swipeEvent(steps: steps, at: point) else { return }
         // gestures act on the display under the pointer

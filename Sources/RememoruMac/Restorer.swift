@@ -526,24 +526,12 @@ final class Restorer {
             return .failed("display is not in the snapshot")
         }
         let desired = desiredOrder(saved, display: uuid)
-        func current() -> [UInt64] { state.spaces(onDisplay: uuid).map(\.id) }
-        func inOrder() -> Bool { current().filter { desired.contains($0) } == desired }
-        if inOrder() { return .done }
-        guard BridgedOperations.canMoveSpaces else {
-            return .failed("this macOS version has no usable SLSBridgedMoveManagedSpaceToDisplayIndexOperation")
+        guard let display = state.display(uuid: uuid) else {
+            return .failed("display is not connected")
         }
-        for (index, space) in desired.enumerated() where current().firstIndex(of: space) != index {
-            guard BridgedOperations.moveSpace(space, displayIdentifier: uuid, toIndex: index) else {
-                return .failed("the space reorder operation could not be submitted")
-            }
-            let placed = MissionControl.wait(timeout: 2) { () -> Bool? in
-                refresh()
-                return current().firstIndex(of: space) == index ? true : nil
-            } != nil
-            if !placed { return .failed("space \(space) did not move to position \(index + 1)") }
-        }
+        let outcome = SpaceOrderRestorer.restore(desired: desired, display: display, cancellation: cancellation, log: log)
         refresh()
-        return inOrder() ? .done : .failed("order still differs")
+        return outcome
     }
 
     /// Live space ids in the snapshot's Mission Control order.

@@ -17,24 +17,14 @@ enum BridgedOperations {
 
     private static let performSelector = NSSelectorFromString("performWithWMBridgeDelegate")
     private static let moveWindowsInit = NSSelectorFromString("initWithWindows:spaceID:")
-    private static let moveSpaceInit = NSSelectorFromString("initWithSpaceID:displayIdentifier:index:")
 
     private static var moveWindowsClass: AnyClass? {
         _ = skyLight.isLoaded
         return NSClassFromString("SLSBridgedMoveWindowsToManagedSpaceOperation")
     }
 
-    private static var moveSpaceClass: AnyClass? {
-        _ = skyLight.isLoaded
-        return NSClassFromString("SLSBridgedMoveManagedSpaceToDisplayIndexOperation")
-    }
-
     static var canMoveWindows: Bool {
         isUsable(moveWindowsClass, initializer: moveWindowsInit)
-    }
-
-    static var canMoveSpaces: Bool {
-        isUsable(moveSpaceClass, initializer: moveSpaceInit)
     }
 
     private static func isUsable(_ cls: AnyClass?, initializer: Selector) -> Bool {
@@ -50,18 +40,6 @@ enum BridgedOperations {
               let allocated = allocate(cls) else { return false }
         let windows = ids.map { NSNumber(value: $0) } as NSArray
         guard let raw = initialize(allocated, moveWindowsInit, windows, space) else { return false }
-        return perform(Unmanaged<AnyObject>.fromOpaque(raw).takeRetainedValue())
-    }
-
-    /// Submits moving a Space to a zero-based final position among its
-    /// display's Spaces.
-    static func moveSpace(_ space: UInt64, displayIdentifier: String, toIndex index: Int) -> Bool {
-        typealias InitFn = @convention(c) (UnsafeMutableRawPointer, Selector, UInt64, NSString, UInt32)
-            -> UnsafeMutableRawPointer?
-        guard canMoveSpaces, let cls = moveSpaceClass, let initialize = send(as: InitFn.self),
-              let position = UInt32(exactly: index), let allocated = allocate(cls) else { return false }
-        guard let raw = initialize(allocated, moveSpaceInit, space, displayIdentifier as NSString, position)
-        else { return false }
         return perform(Unmanaged<AnyObject>.fromOpaque(raw).takeRetainedValue())
     }
 

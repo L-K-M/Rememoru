@@ -108,7 +108,7 @@ struct CommandRunner {
     private func snapshot(output: String?) -> Int32 {
         do {
             let service = try service()
-            let snapshot = service.captureSnapshot()
+            let snapshot = try service.captureSnapshot()
             let url: URL
             if let output {
                 url = URL(fileURLWithPath: output)

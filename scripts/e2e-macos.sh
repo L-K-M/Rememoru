@@ -6,7 +6,7 @@
 #   2. put it on a second desktop that does not exist yet,
 #   3. make it a fullscreen space right after desktop 1, and
 #   4. pair it with a second window in Split View,
-# and checks each result against WindowServer.
+# and checks WindowServer state and Mission Control's visible order.
 #
 # Usage: scripts/e2e-macos.sh [path/to/Rememoru binary]
 set -euo pipefail
@@ -21,6 +21,9 @@ fail() {
   echo "e2e: FAIL: $*" >&2
   exit 1
 }
+
+[[ "$(defaults read com.apple.dock mru-spaces 2>/dev/null)" == 0 ]] \
+  || fail "turn off Automatically rearrange Spaces based on most recent use before running this check"
 
 # snapshot_window FILE: print the saved TextEdit window of the note as JSON,
 # or nothing
@@ -107,12 +110,16 @@ import json, sys
 snap = json.load(open(sys.argv[1]))
 display = snap["displays"][0]
 first = display["spaces"][0]
-display["spaces"] = [first, "e2e-fullscreen"]
+remaining = [u for u in display["spaces"] if u != first]
+display["spaces"] = [first, "e2e-fullscreen"] + remaining
 display["active_space"] = first
-snap["spaces"] = [s for s in snap["spaces"] if s["uuid"] == first] + [{
+snap["spaces"] += [{
     "uuid": "e2e-fullscreen", "id": 0, "type": "fullscreen",
     "display_uuid": display["uuid"], "index": 1, "active": False,
 }]
+for s in snap["spaces"]:
+    if s["uuid"] in display["spaces"]:
+        s["index"] = display["spaces"].index(s["uuid"])
 for w in snap["windows"]:
     if w["app"] == "TextEdit" and "rememoru-e2e" in (w.get("title") or ""):
         w["space_uuid"] = "e2e-fullscreen"
@@ -131,6 +138,28 @@ order = [kinds.get(u) for u in display["spaces"]]
 print("e2e: space order", order, "window on", kinds.get(w.get("space_uuid")))
 assert kinds.get(w.get("space_uuid")) == "fullscreen", "window not on a fullscreen space"
 assert display["spaces"].index(w["space_uuid"]) == 1, "fullscreen space is not second"
+PY
+
+# WindowServer's array can move while Dock's visible order stays unchanged.
+# Inspect the actual thumbnails independently of the snapshot path.
+"$APP" inspect-mc > "$WORK/fullscreen-mission-control.txt"
+python3 - "$WORK/fullscreen-mission-control.txt" <<'PY' || fail "fullscreen thumbnail is not second in Mission Control"
+import re, sys
+lists = []
+current = None
+for line in open(sys.argv[1]):
+    if "id=mc.spaces.list" in line:
+        current = []
+        lists.append(current)
+    elif current is not None and "AXButton title=" in line:
+        match = re.search('title=“(.*?)”', line)
+        if match:
+            current.append(match.group(1))
+    elif current is not None:
+        current = None
+print("e2e: visible thumbnail order", lists)
+assert len(lists) == 1, "this fixture needs a single-display runner"
+assert len(lists[0]) >= 3 and lists[0][1] == "TextEdit", "TextEdit fullscreen thumbnail is not second"
 PY
 
 echo "e2e: focus the fullscreen window's Space"
