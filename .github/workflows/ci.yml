@@ -22,6 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # License statements must agree with LICENSE (Unlicense): the
+      # Info.plist that build-app.sh writes and the README License section.
+      - name: Check license statements
+        run: |
+          grep -A1 '<key>NSHumanReadableCopyright</key>' scripts/build-app.sh \
+            | grep -qF '<string>Public domain (Unlicense)</string>'
+          sed -n '/^## License$/,/^## /p' README.md | grep -qF '[Unlicense](LICENSE)'
+
       - name: Build and test
         run: |
           swift --version
@@ -38,6 +46,12 @@ jobs:
         run: |
           swift --version
           scripts/build.sh --clean
+
+      # Finder's Get Info and the About panel show this string.
+      - name: Check the bundle's license statement
+        run: |
+          test "$(plutil -extract NSHumanReadableCopyright raw dist/Rememoru.app/Contents/Info.plist)" \
+            = 'Public domain (Unlicense)'
 
       - name: Use a fixed Space order
         run: |
