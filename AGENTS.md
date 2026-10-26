@@ -49,6 +49,18 @@ checked against WindowServer. Multi-display paths, the menu bar UI and
 the login item still need a real Mac; `Rememoru dump` prints raw
 SkyLight data for diagnosis.
 
+## Licensing
+
+- Rememoru's own code is Unlicense (`LICENSE`). Keep the
+  `NSHumanReadableCopyright` string in `scripts/build-app.sh` and the
+  README License section consistent with it; CI checks both.
+- The app bundles no third-party code or assets. Before adding a SwiftPM
+  dependency, vendored file or bundled asset, confirm its license allows
+  redistribution. Then have `build-app.sh` generate
+  `Third-Party-Notices.txt` into `Contents/Resources` from the resolved
+  packages, check it with `test -s` in `ci.yml` and `release.yml`, and
+  update the README.
+
 ## macOS findings — don't regress these
 
 - `SLSCopySpacesForWindows` with several windows returns the **union** of

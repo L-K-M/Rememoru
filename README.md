@@ -253,3 +253,11 @@ then with their settings open. Offscreen surfaces on an active Space that
 are absent from a successful accessibility window listing are excluded;
 windows on other Spaces, minimized windows, hidden apps and failed
 accessibility reads must remain eligible.
+
+## License
+
+Rememoru's own code is released under the [Unlicense](LICENSE). The app
+bundles no third-party code or assets: it links only Apple's system
+frameworks, and its menu bar icons are SF Symbols that macOS draws.
+yabai, AltTab, Rectangle, Hammerspoon, Loop and InstantSpaceSwitcher are
+credited in the source for techniques; none of their code is included.
