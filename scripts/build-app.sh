@@ -73,7 +73,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSUIElement</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
-    <string>MIT License</string>
+    <string>Public domain (Unlicense)</string>
 </dict>
 </plist>
 PLIST
