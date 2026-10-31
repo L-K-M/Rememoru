@@ -3,10 +3,9 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-/// Mission Control automation through the Dock's accessibility tree
-/// (macOS 15/26): Dock > "mc" > "mc.display" (by AXDisplayID) > "mc.spaces"
-/// > "mc.spaces.add" / "mc.spaces.list". Same path as Hammerspoon's
-/// hs.spaces. macOS 27 is reported to move this tree to WindowManager.
+/// Mission Control's AX tree lives under Dock > "mc" on macOS 15/26,
+/// and directly under WindowManager on macOS 27. Both expose "mc.display"
+/// (by AXDisplayID) > "mc.spaces" > "mc.spaces.add" / "mc.spaces.list".
 enum MissionControl {
     private typealias CoreDockSendNotificationFn = @convention(c) (CFString, Int32) -> Int32
     private static let sendNotification: CoreDockSendNotificationFn? = {
@@ -16,30 +15,76 @@ enum MissionControl {
         return unsafeBitCast(address, to: CoreDockSendNotificationFn.self)
     }()
 
-    static var dock: AXElement? {
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
-        else { return nil }
-        return AXElement.application(app.processIdentifier)
+    enum Observation<Node> {
+        case unavailable
+        case closed
+        case open(Node)
+
+        var group: Node? {
+            if case .open(let group) = self { return group }
+            return nil
+        }
+
+        var isOpen: Bool? {
+            switch self {
+            case .unavailable: return nil
+            case .closed: return false
+            case .open: return true
+            }
+        }
     }
 
-    /// The "mc" group, present only while Mission Control is shown.
+    static func observe<Node>(
+        hosts: [Node], children: (Node) -> [Node]?, identifier: (Node) -> String?
+    ) -> Observation<Node> {
+        var allReadable = !hosts.isEmpty
+        for host in hosts {
+            guard let children = children(host) else { allReadable = false; continue }
+            if let group = children.first(where: { identifier($0) == "mc" }) { return .open(group) }
+            if children.contains(where: { identifier($0) == "mc.display" }) { return .open(host) }
+        }
+        return allReadable ? .closed : .unavailable
+    }
+
+    private static var observation: Observation<AXElement> {
+        var seen = Set<pid_t>()
+        let hosts = ["com.apple.WindowManager", "com.apple.dock"].flatMap {
+            NSRunningApplication.runningApplications(withBundleIdentifier: $0)
+        }.filter { seen.insert($0.processIdentifier).inserted }.map {
+            AXElement.application($0.processIdentifier)
+        }
+        return observe(hosts: hosts, children: { $0.elementsIfAvailable(kAXChildrenAttribute) },
+                       identifier: { $0.identifier })
+    }
+
+    /// The host or wrapper containing the visible display groups.
     static var group: AXElement? {
-        dock?.children.first { $0.identifier == "mc" }
+        observation.group
     }
 
     static var isOpen: Bool { group != nil }
 
-    /// A failed Dock AX read must not look like confirmed closure.
+    /// An unreadable candidate host must not look like confirmed closure.
     private static var openState: Bool? {
-        guard let children = dock?.elementsIfAvailable(kAXChildrenAttribute) else { return nil }
-        return children.contains { $0.identifier == "mc" }
+        observation.isOpen
     }
 
     /// Opens Mission Control and waits for its accessibility tree.
     static func open(timeout: TimeInterval = 3) -> AXElement? {
-        if let group { return group }
-        toggle()
-        return wait(timeout: timeout) { group }
+        openIfNeeded(readState: { observation }, show: toggle,
+                     waitForGroup: { wait(timeout: timeout) { group } })
+    }
+
+    static func openIfNeeded<Node>(
+        readState: () -> Observation<Node>, show: () -> Void, waitForGroup: () -> Node?
+    ) -> Node? {
+        switch readState() {
+        case .open(let group): return group
+        case .unavailable: return nil
+        case .closed:
+            show()
+            return waitForGroup()
+        }
     }
 
     @discardableResult
@@ -150,7 +195,9 @@ enum MissionControl {
             guard let index = index(), buttons.indices.contains(index) else { return nil }
             return buttons[index]
         }), button.perform(kAXPressAction) else { return false }
-        return wait(timeout: 2) { isOpen ? nil : true } != nil
+        return wait(timeout: 2) {
+            closureConfirmation(isOpen: { openState }, canContinue: { true })
+        } == true
     }
 
     /// Polls `probe` until it returns a value or the timeout passes.
