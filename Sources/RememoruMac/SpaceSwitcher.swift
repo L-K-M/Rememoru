@@ -165,10 +165,12 @@ enum SpaceSwitcher {
                     case .unsettled: break
                     }
                 }
-                guard canContinue(), closeMissionControl(), canContinue() else { return nil }
-                // Retry the same position once if its target appeared but
-                // did not remain active through the settling interval.
-                if !observed { break }
+                if !observed {
+                    guard canContinue(), closeMissionControl(), canContinue() else { return nil }
+                    break
+                }
+                // Confirmation already closed Mission Control. Retry only
+                // the position whose target did not remain active.
             }
         }
         trace("  space switch target=\(spaceID): no thumbnail selection confirmed the target")

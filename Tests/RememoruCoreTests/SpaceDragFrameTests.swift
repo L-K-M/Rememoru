@@ -61,7 +61,7 @@ final class SpaceDragFrameTests: XCTestCase {
             Rect(x: $0, y: -108.5, w: 190, h: 129)
         }
         let normalized = reported.map { SpaceDragGeometry.thumbnailFrame($0, origin: .center) }
-        XCTAssertFalse(SpaceDragGeometry.framesFit(normalized, inside: Rect(x: 4872, y: -76, w: 1920, h: 146)))
+        XCTAssertFalse(SpaceDragGeometry.framesFit(normalized, inside: bar))
     }
 
 }

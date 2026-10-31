@@ -310,7 +310,7 @@ final class SpaceThumbnailSurveyTests: XCTestCase {
     func testExhaustedIndicesFails() throws {
         var s = try XCTUnwrap(SpaceThumbnailSurvey(knownIDs: [10, 20, 30]))
 
-        // Consume all 6 nextIndex calls without observing
+        // A second request while a selection is still pending must fail.
         XCTAssertEqual(s.nextIndex(), 0)
         XCTAssertNil(s.nextIndex()) // pending set, fails
         XCTAssertTrue(s.failed)

@@ -222,8 +222,8 @@ final class SpaceSwitcherTests: XCTestCase {
                 return true
             },
             performSwipe: { _, _ in },
-            showMissionControl: { _, index in
-                guard let index = index() else { return false }
+            showMissionControl: { _, indexCallback in
+                guard let index = indexCallback() else { return false }
                 selections.append(index)
                 active = 3
                 return true
@@ -238,6 +238,7 @@ final class SpaceSwitcherTests: XCTestCase {
         var selections: [Int] = []
         var selectedAt: Date?
         var active: UInt64 = 1
+        var closeRequests = 0
         let method = SpaceSwitcher.show(
             spaceID: 2, display: display,
             readSpaces: {
@@ -247,10 +248,10 @@ final class SpaceSwitcherTests: XCTestCase {
                               index: index, isActive: id == active)
                 }
             },
-            ensureMissionControlClosed: { true },
+            ensureMissionControlClosed: { closeRequests += 1; return true },
             performSwipe: { _, _ in },
-            showMissionControl: { _, index in
-                guard let index = index() else { return false }
+            showMissionControl: { _, indexCallback in
+                guard let index = indexCallback() else { return false }
                 selections.append(index)
                 active = 2
                 selectedAt = Date()
@@ -259,6 +260,7 @@ final class SpaceSwitcherTests: XCTestCase {
         )
         XCTAssertEqual(method, .missionControl)
         XCTAssertEqual(selections, [1, 1])
+        XCTAssertEqual(closeRequests, 2)
     }
 
     func testSwipeEventTargetsRequestedDisplay() throws {
