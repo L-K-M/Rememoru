@@ -3,6 +3,36 @@ import XCTest
 @testable import RememoruMac
 
 final class MissionControlTests: XCTestCase {
+    func testOpenMissionControlIsNotToggledClosed() {
+        let group: String? = MissionControl.openIfNeeded(
+            readState: { .open("mc") }, show: { XCTFail("already open") },
+            waitForGroup: { XCTFail("already open"); return nil }
+        )
+        XCTAssertEqual(group, "mc")
+    }
+
+    func testUnavailableHostNeverTriggersAnOpeningToggle() {
+        let group: String? = MissionControl.openIfNeeded(
+            readState: { .unavailable }, show: { XCTFail("unknown visibility") },
+            waitForGroup: { XCTFail("unknown visibility"); return nil }
+        )
+        XCTAssertNil(group)
+    }
+
+    func testClosedMissionControlOpensAndRequiresAnObservedGroup() {
+        for expected: String? in ["mc", nil] {
+            var shows = 0
+            var waits = 0
+            let group = MissionControl.openIfNeeded(
+                readState: { .closed }, show: { shows += 1 },
+                waitForGroup: { waits += 1; return expected }
+            )
+            XCTAssertEqual(group, expected)
+            XCTAssertEqual(shows, 1)
+            XCTAssertEqual(waits, 1)
+        }
+    }
+
     func testClosedMissionControlIsNeverToggledOpen() {
         var dismissals = 0
         var waits = 0
