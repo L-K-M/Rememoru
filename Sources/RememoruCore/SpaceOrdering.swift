@@ -118,6 +118,20 @@ public struct SpaceOrderSurvey {
 /// Drops into a gap in the Spaces bar, outside every thumbnail. Dropping
 /// onto another fullscreen thumbnail can create Split View instead.
 public enum SpaceDragGeometry {
+    public enum FrameOrigin: Sendable {
+        case topLeft
+        case center
+    }
+
+    public static func thumbnailFrame(_ reported: Rect, origin: FrameOrigin) -> Rect {
+        switch origin {
+        case .topLeft: return reported
+        case .center:
+            return Rect(x: reported.x - reported.w / 2, y: reported.y - reported.h / 2,
+                        w: reported.w, h: reported.h)
+        }
+    }
+
     public struct Path: Equatable, Sendable {
         public let startX: Double
         public let startY: Double
@@ -125,12 +139,14 @@ public enum SpaceDragGeometry {
         public let endY: Double
     }
 
+    public static func framesFit(_ frames: [Rect], inside bar: Rect) -> Bool {
+        guard !frames.isEmpty, valid(bar), frames.allSatisfy({ valid($0) && contains($0, in: bar) }) else { return false }
+        return zip(frames, frames.dropFirst()).allSatisfy { $0.x + $0.w < $1.x }
+    }
+
     public static func path(from source: Int, before target: Int, frames: [Rect], inside bar: Rect) -> Path? {
         guard frames.indices.contains(source), frames.indices.contains(target), source > target,
-              valid(bar), frames.allSatisfy({ valid($0) && contains($0, in: bar) }) else { return nil }
-        for (left, right) in zip(frames, frames.dropFirst()) {
-            guard left.x + left.w < right.x else { return nil }
-        }
+              framesFit(frames, inside: bar) else { return nil }
         let destination = frames[target]
         let x = target == 0 ? destination.x - min(12, destination.w * 0.1)
             : (frames[target - 1].x + frames[target - 1].w + destination.x) / 2

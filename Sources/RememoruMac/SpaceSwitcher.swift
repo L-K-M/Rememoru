@@ -17,54 +17,80 @@ enum SpaceSwitcher {
         case missionControl = "Mission Control"
     }
 
+    private enum Confirmation {
+        case confirmed(Method)
+        case unsettled
+        case failed
+
+        var method: Method? {
+            if case .confirmed(let method) = self { return method }
+            return nil
+        }
+    }
+
+    // The legacy private Dock swipe fields are unreliable with macOS 27.
+    static var supportsNativeGestures: Bool {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27
+    }
+
     /// Makes `spaceID` the visible space of its display. Returns the method
     /// that worked, or nil.
     static func show(
         spaceID: UInt64, display: LiveDisplay, readSpaces: @escaping () -> [LiveSpace],
         canContinue: @escaping () -> Bool = { true },
         ensureMissionControlClosed: (() -> Bool)? = nil,
-        performSwipe: (Int, LiveDisplay) -> Void = swipe,
-        showMissionControl: (UInt32, () -> Int?) -> Bool = { MissionControl.showSpace(display: $0, index: $1) },
+        performSwipe: ((Int, LiveDisplay) -> Void)? = nil,
+        showMissionControl: ((UInt32, () -> Int?) -> Bool)? = nil,
         trace: (String) -> Void = { _ in }
     ) -> Method? {
         guard canContinue() else { return nil }
         func current() -> [LiveSpace] {
             guard canContinue() else { return [] }
-            return readSpaces().filter { $0.displayUUID == display.uuid }.sorted { $0.index < $1.index }
+            return readSpaces().filter { $0.displayUUID == display.uuid && $0.kind.isRestorable }
+                .sorted { $0.index < $1.index }
         }
         func isShown() -> Bool { current().first { $0.isActive }?.id == spaceID }
         let closeMissionControl = ensureMissionControlClosed ?? { MissionControl.close(canContinue: canContinue) }
-        func finished(_ method: Method) -> Method? {
+        func finished(_ method: Method) -> Confirmation {
             // Active-Space state can update while Mission Control still
             // exposes thumbnail bounds. Window mutations require it closed.
-            guard canContinue() else { return nil }
+            guard canContinue() else { return .failed }
             let closed = closeMissionControl()
-            guard canContinue() else { return nil }
+            guard canContinue() else { return .failed }
             guard closed else {
                 trace("  space switch target=\(spaceID) method=\(method.rawValue): Mission Control closure not confirmed")
-                return nil
+                return .failed
             }
-            let shown = isShown()
-            guard canContinue() else { return nil }
+            let closedAt = Date()
+            var stableSince = Date()
+            let shown = MissionControl.wait(timeout: MissionControl.selectionSettleTimeout, interval: 0.05) { () -> Bool? in
+                guard canContinue() else { return false }
+                guard isShown() else { stableSince = Date(); return nil }
+                return Date().timeIntervalSince(closedAt) >= MissionControl.selectionSettleDelay
+                    && Date().timeIntervalSince(stableSince) >= MissionControl.activeStableDelay ? true : nil
+            } == true
+            guard canContinue() else { return .failed }
             guard shown else {
-                trace("  space switch target=\(spaceID) method=\(method.rawValue): target no longer active")
-                return nil
+                trace("  space switch target=\(spaceID) method=\(method.rawValue): target did not remain active")
+                return .unsettled
             }
             trace("  space switch target=\(spaceID) confirmed via \(method.rawValue)")
-            return method
+            return .confirmed(method)
         }
 
-        if isShown() { return finished(.alreadyShown) }
+        if isShown() { return finished(.alreadyShown).method }
         let initial = current()
         guard canContinue(), initial.contains(where: { $0.id == spaceID }) else { return nil }
         trace("  space switch target=\(spaceID) active=\(initial.first(where: \.isActive).map { String($0.id) } ?? "unknown")"
             + " count=\(initial.count)")
 
+        let swipeSpace = performSwipe ?? SpaceSwitcher.swipe
+        let useGestures = performSwipe != nil || supportsNativeGestures
         var traversal: SpaceTraversal?
         // The reported array can disagree with Dock's navigation order.
         // Confirm actual IDs and keep sweeping in one direction until an
         // edge, rather than reversing whenever a reported index is crossed.
-        while true {
+        while useGestures {
             guard canContinue() else { return nil }
             let spaces = current()
             guard spaces.contains(where: { $0.id == spaceID }) else { break }
@@ -72,7 +98,7 @@ enum SpaceSwitcher {
                 trace("  space switch target=\(spaceID): no active Space available for gestures")
                 break
             }
-            if previousID == spaceID { return finished(.gesture) }
+            if previousID == spaceID { return finished(.gesture).method }
             // A transition can omit the active flag in the initial read.
             // Initialize from this fresh state before consuming a hop.
             if traversal == nil {
@@ -81,7 +107,7 @@ enum SpaceSwitcher {
             guard let direction = traversal?.nextDirection() else { break }
             var observedID: UInt64?
             guard canContinue() else { return nil }
-            performSwipe(direction.rawValue, display)
+            swipeSpace(direction.rawValue, display)
             let changed = MissionControl.wait(timeout: 1.5, { () -> Bool? in
                 guard canContinue() else { return false }
                 guard let activeID = current().first(where: \.isActive)?.id,
@@ -98,26 +124,55 @@ enum SpaceSwitcher {
             if traversal?.observe(from: previousID, to: observedID, orderedIDs: spaces.map(\.id)) != true { break }
         }
         guard canContinue() else { return nil }
-        if isShown() { return finished(.gesture) }
+        if isShown() { return finished(.gesture).method }
         guard canContinue() else { return nil }
-        guard traversal?.orderMatchesNavigation != false else {
-            trace("  space switch target=\(spaceID): Dock order differs; refusing an ambiguous thumbnail index")
-            return nil
+        let ids = Set(initial.map(\.id))
+        guard ids.count == initial.count else { return nil }
+        let select: (UInt32, () -> Int?) -> Bool = showMissionControl ?? { id, index in
+            MissionControl.showSpace(display: id, index: index, expectedCount: initial.count, canContinue: canContinue)
         }
-        // A thumbnail press can change the Space even when Mission Control's
-        // closing wait times out. Allow WindowServer's active state to catch up.
-        let missionControlResult = showMissionControl(display.id, {
-            current().firstIndex(where: { $0.id == spaceID })
-        })
-        trace("  space switch Mission Control target=\(spaceID) result=\(missionControlResult)")
-        guard MissionControl.wait(timeout: 2, { () -> Bool? in
-            guard canContinue() else { return false }
-            return isShown() ? true : nil
-        }) == true else {
-            trace("  space switch target=\(spaceID): active-Space confirmation timed out or cancelled")
-            return nil
+        let hint = traversal?.orderMatchesNavigation == false ? nil : initial.firstIndex(where: { $0.id == spaceID })
+        let indices = hint.map { [$0] } ?? []
+        let candidates = indices + initial.indices.filter { $0 != hint }
+        // A reported index is only a hint. Probe actual thumbnail positions
+        // and accept a selection only after the requested ID is confirmed.
+        for index in candidates {
+            for _ in 0..<2 {
+                guard canContinue(), Set(current().map(\.id)) == ids else { return nil }
+                if isShown() {
+                    switch finished(.missionControl) {
+                    case .confirmed(let method): return method
+                    case .failed: return nil
+                    case .unsettled: break
+                    }
+                }
+                guard canContinue() else { return nil }
+                let result = select(display.id, {
+                    guard canContinue(), Set(current().map(\.id)) == ids else { return nil }
+                    return index
+                })
+                guard canContinue() else { return nil }
+                trace("  space switch Mission Control target=\(spaceID) index=\(index) result=\(result)")
+                // A press can succeed even if the closing wait timed out.
+                let observed = MissionControl.wait(timeout: 2, { () -> Bool? in
+                    guard canContinue() else { return false }
+                    return isShown() ? true : nil
+                }) == true
+                if observed {
+                    switch finished(.missionControl) {
+                    case .confirmed(let method): return method
+                    case .failed: return nil
+                    case .unsettled: break
+                    }
+                }
+                guard canContinue(), closeMissionControl(), canContinue() else { return nil }
+                // Retry the same position once if its target appeared but
+                // did not remain active through the settling interval.
+                if !observed { break }
+            }
         }
-        return finished(.missionControl)
+        trace("  space switch target=\(spaceID): no thumbnail selection confirmed the target")
+        return nil
     }
 
     /// Posts `abs(steps)` Dock-swipe gestures on a display; negative steps
