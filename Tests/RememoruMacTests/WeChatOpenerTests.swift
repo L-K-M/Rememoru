@@ -283,6 +283,8 @@ final class WeChatOpenerTests: XCTestCase {
     }
 
     func testNewHiddenMainRestartsRemoteProbeBelowTheOldCursor() {
+        // Probe resets use in-memory observations, so polling sleeps only
+        // make this test sensitive to CI scheduler delays.
         let cancellation = CancellationFlag()
         var currentWindowIDs: [UInt32] = [200]
         var previousWindowIDs = Set<UInt32>()
@@ -316,7 +318,7 @@ final class WeChatOpenerTests: XCTestCase {
                 },
                 deadline: deadline, cancellation: cancellation
             )
-        }, cancellation: cancellation, timeout: 0.01, interval: 0.001)
+        }, cancellation: cancellation, timeout: 1, interval: 0)
 
         XCTAssertEqual(result, .done)
         XCTAssertEqual(presses, 1)

@@ -18,7 +18,9 @@ public final class LayoutService {
         var orders: [String: [UInt64]] = [:]
         for display in state.displays {
             let original = state.spaces(onDisplay: display.uuid).filter { $0.kind.isRestorable }
-            orders[display.uuid] = try SpaceOrderRestorer.captureOrder(display: display, original: original)
+            orders[display.uuid] = try SpaceOrderRestorer.captureOrder(
+                display: display, original: original, trace: { logFile.write($0) }
+            )
         }
         guard SpaceOrderRestorer.captureStillValid(state),
               let ordered = SpaceOrdering.applying(orders, to: state) else {

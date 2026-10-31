@@ -89,13 +89,13 @@ final class SpaceSwitcherTests: XCTestCase {
         XCTAssertEqual(directions, [-1, -1, -1, 1, 1, 1, 1, 1, 1])
     }
 
-    func testUnreachableTargetWithMismatchedOrderDoesNotSelectThumbnail() {
+    func testMismatchedOrderProbesAllPhysicalIndices() {
         let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
         let reported: [UInt64] = [12, 39, 94, 87, 50, 80, 75]
         let dock: [UInt64] = [12, 39, 50, 75]
         var active = 0
         var swipes = 0
-        var thumbnailRequests = 0
+        var probedIndices: [Int] = []
         let method = SpaceSwitcher.show(
             spaceID: 80, display: display,
             readSpaces: {
@@ -109,12 +109,158 @@ final class SpaceSwitcherTests: XCTestCase {
                 swipes += 1
                 active = min(max(active + direction, 0), dock.count - 1)
             },
-            showMissionControl: { _, _ in thumbnailRequests += 1; return false }
+            showMissionControl: { _, indexCallback in
+                probedIndices.append(indexCallback() ?? -1)
+                return false
+            }
         )
 
         XCTAssertNil(method)
-        XCTAssertEqual(thumbnailRequests, 0)
+        XCTAssertEqual(probedIndices, Array(0..<reported.count), "all physical indices 0..<count are probed")
         XCTAssertEqual(swipes, 8)
+    }
+
+    func testMissionControlFallbackSucceedsWithMismatchedOrder() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let reported: [UInt64] = [1, 2, 3]
+        // Physical order differs from reported: index 0→id1, 1→id3, 2→id2
+        let physical: [UInt64] = [1, 3, 2]
+        let target: UInt64 = 2
+        var activeID: UInt64 = 1
+        var positionsSelected: [Int] = []
+        let method = SpaceSwitcher.show(
+            spaceID: target, display: display,
+            readSpaces: {
+                reported.enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == activeID)
+                }
+            },
+            ensureMissionControlClosed: { true },
+            performSwipe: { _, _ in },
+            showMissionControl: { _, indexCallback in
+                guard let position = indexCallback() else { return false }
+                positionsSelected.append(position)
+                // Simulate the thumbnail selection activating the space at that physical position
+                activeID = physical[position]
+                return false
+            }
+        )
+
+        XCTAssertEqual(method, .missionControl)
+        // No confirmed hops so orderMatchesNavigation stays true; hint = reported index of target (1).
+        // Candidates: [1, 0, 2]. Index 2 (physical id2) confirms the target.
+        XCTAssertEqual(positionsSelected, [1, 0, 2], "hint-first probe order; last index hits the target")
+        XCTAssertEqual(activeID, target)
+    }
+
+    func testMembershipChangeAbortsThumbnailProbe() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        let reported: [UInt64] = [1, 2, 3]
+        let physical: [UInt64] = [1, 3, 2]
+        let target: UInt64 = 2
+        var activeID: UInt64 = 1
+        var probeCount = 0
+        let method = SpaceSwitcher.show(
+            spaceID: target, display: display,
+            readSpaces: {
+                // After the first probe, a new space (id4) appears, changing membership
+                let ids: [UInt64] = probeCount > 0 ? [1, 2, 3, 4] : reported
+                return ids.enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == activeID)
+                }
+            },
+            ensureMissionControlClosed: { true },
+            performSwipe: { _, _ in },
+            showMissionControl: { _, indexCallback in
+                guard let position = indexCallback() else { return false }
+                // First probe (hint index 1) activates physical[1]=id3, not the target
+                activeID = physical[position]
+                probeCount += 1
+                return false
+            }
+        )
+
+        XCTAssertNil(method, "membership change must abort before a second thumbnail selection")
+        XCTAssertEqual(probeCount, 1, "only the first probe executes; guard catches the drift")
+    }
+
+    func testTransientTargetAfterClosureIsNotConfirmed() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        var closedAt: Date?
+        let method = SpaceSwitcher.show(
+            spaceID: 2, display: display,
+            readSpaces: {
+                let active: UInt64 = closedAt.map { Date().timeIntervalSince($0) >= 0.65 } == true ? 3 : 2
+                return [UInt64(1), 2, 3].enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == active)
+                }
+            },
+            ensureMissionControlClosed: { closedAt = Date(); return true },
+            performSwipe: { _, _ in XCTFail("initial target is already active") },
+            showMissionControl: { _, _ in XCTFail("initial target is already active"); return false }
+        )
+        XCTAssertNil(method)
+    }
+
+    func testLateTargetDuringClosureDoesNotSelectAnotherThumbnail() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        var active: UInt64 = 1
+        var selections: [Int] = []
+        let method = SpaceSwitcher.show(
+            spaceID: 2, display: display,
+            readSpaces: {
+                [UInt64(1), 2, 3].enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == active)
+                }
+            },
+            ensureMissionControlClosed: {
+                if selections.count == 1 { active = 2 }
+                return true
+            },
+            performSwipe: { _, _ in },
+            showMissionControl: { _, indexCallback in
+                guard let index = indexCallback() else { return false }
+                selections.append(index)
+                active = 3
+                return true
+            }
+        )
+        XCTAssertEqual(method, .missionControl)
+        XCTAssertEqual(selections, [1])
+    }
+
+    func testTransientThumbnailTargetRetriesTheSamePosition() {
+        let display = LiveDisplay(id: 1, uuid: "D", frame: Rect(x: 0, y: 0, w: 1920, h: 1080), isMain: true)
+        var selections: [Int] = []
+        var selectedAt: Date?
+        var active: UInt64 = 1
+        var closeRequests = 0
+        let method = SpaceSwitcher.show(
+            spaceID: 2, display: display,
+            readSpaces: {
+                if selections.count == 1, let selectedAt, Date().timeIntervalSince(selectedAt) >= 0.65 { active = 3 }
+                return [UInt64(1), 2, 3].enumerated().map { index, id in
+                    LiveSpace(id: id, key: String(id), kind: .fullscreen, displayUUID: "D",
+                              index: index, isActive: id == active)
+                }
+            },
+            ensureMissionControlClosed: { closeRequests += 1; return true },
+            performSwipe: { _, _ in },
+            showMissionControl: { _, indexCallback in
+                guard let index = indexCallback() else { return false }
+                selections.append(index)
+                active = 2
+                selectedAt = Date()
+                return true
+            }
+        )
+        XCTAssertEqual(method, .missionControl)
+        XCTAssertEqual(selections, [1, 1])
+        XCTAssertEqual(closeRequests, 2)
     }
 
     func testSwipeEventTargetsRequestedDisplay() throws {
