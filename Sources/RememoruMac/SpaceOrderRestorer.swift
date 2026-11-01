@@ -109,11 +109,20 @@ enum SpaceOrderRestorer {
             }
             let actual = survey(display: display, original: original, canContinue: canContinue, trace: log)
             log("  observed Dock Space order after move: \(actual.map { String(describing: $0) } ?? "unavailable")")
-            guard let actual, actual == move.expectedOrder else {
-                return .failed("Mission Control's Space order did not match the requested move")
-            }
+            let outcome = verifyMoveOutcome(actual: actual, expected: move.expectedOrder)
+            guard case .done = outcome, let actual else { return outcome }
             current = actual
             log("  confirmed Dock Space order: \(actual)")
+        }
+        return .done
+    }
+
+    static func verifyMoveOutcome(actual: [UInt64]?, expected: [UInt64]) -> RestoreReport.Outcome {
+        guard let actual else {
+            return .failed("could not verify Mission Control's Space order after the move; wait for Space transitions to finish, then retry")
+        }
+        guard actual == expected else {
+            return .failed("Mission Control's Space order did not match the requested move")
         }
         return .done
     }

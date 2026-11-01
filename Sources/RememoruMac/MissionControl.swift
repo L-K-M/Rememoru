@@ -133,6 +133,21 @@ enum MissionControl {
         return open ? nil : true
     }
 
+    /// Confirms overview closure only; callers must verify the active Space.
+    static func selectWithFallback(
+        canContinue: () -> Bool, press: () -> Bool, waitUntilClosed: () -> Bool,
+        isOpen: () -> Bool?, validateFallback: () -> Bool, pressFallback: () -> Bool
+    ) -> Bool {
+        guard canContinue(), press(), canContinue() else { return false }
+        if waitUntilClosed() { return canContinue() }
+        guard canContinue(), let open = isOpen(), canContinue() else { return false }
+        guard open else { return true }
+        guard validateFallback(), canContinue(), let stillOpen = isOpen(), canContinue() else { return false }
+        guard stillOpen else { return true }
+        guard pressFallback(), canContinue() else { return false }
+        return waitUntilClosed() && canContinue()
+    }
+
     private static func toggle() {
         if let sendNotification {
             _ = sendNotification("com.apple.expose.awake" as CFString, 0)
@@ -265,7 +280,7 @@ enum MissionControl {
         Thread.sleep(forTimeInterval: 0.3)
         var previousFrames: [Rect] = []
         var stableSince = Date()
-        guard let button = wait(timeout: 2, { () -> AXElement? in
+        guard let target = wait(timeout: 2, { () -> (button: AXElement, index: Int, frames: [Rect])? in
             guard canContinue() else { return nil }
             let buttons = spaceButtons(display: display).sorted { ($0.frame?.x ?? .infinity) < ($1.frame?.x ?? .infinity) }
             let frames = buttons.compactMap(thumbnailFrame)
@@ -279,21 +294,49 @@ enum MissionControl {
             if frames != previousFrames { previousFrames = frames; stableSince = Date() }
             guard Date().timeIntervalSince(stableSince) >= 0.3,
                   let index = index(), buttons.indices.contains(index) else { return nil }
-            return buttons[index]
+            return (buttons[index], index, frames)
         }), canContinue(),
-              AXUIElementSetMessagingTimeout(button.element, AXElement.messagingTimeout) == .success,
-              button.bool(kAXEnabledAttribute) == true, canContinue() else {
+              AXUIElementSetMessagingTimeout(target.button.element, AXElement.messagingTimeout) == .success,
+              target.button.bool(kAXEnabledAttribute) == true, canContinue() else {
             trace("  Space thumbnail unavailable or selection cancelled")
             return false
         }
         // Timeout belongs to this exact AX object, not its application.
-        guard pressThumbnail(button, canContinue: canContinue), canContinue() else {
-            trace("  Space thumbnail press was not confirmed")
-            return false
-        }
-        let closed = wait(timeout: 2) {
-            closureConfirmation(isOpen: { openState }, canContinue: canContinue)
-        } == true
+        let closed = selectWithFallback(
+            canContinue: canContinue,
+            press: {
+                let pressed = pressThumbnail(target.button, canContinue: canContinue)
+                if !pressed { trace("  Space thumbnail press was not confirmed") }
+                return pressed
+            },
+            waitUntilClosed: {
+                wait(timeout: 2) {
+                    closureConfirmation(isOpen: { openState }, canContinue: canContinue)
+                } == true
+            },
+            isOpen: { openState },
+            validateFallback: {
+                // A delivered pointer click can leave WindowManager's overview
+                // open. Try its native action once, only on the unchanged target.
+                guard canContinue(), isWindowManagerThumbnail(target.button),
+                      index() == target.index, canContinue() else { return false }
+                let fresh = spaceButtons(display: display).sorted { ($0.frame?.x ?? .infinity) < ($1.frame?.x ?? .infinity) }
+                guard fresh.count == target.frames.count, fresh.indices.contains(target.index),
+                      CFEqual(fresh[target.index].element, target.button.element),
+                      fresh.allSatisfy({ $0.role == kAXButtonRole }),
+                      fresh.compactMap(thumbnailFrame) == target.frames,
+                      let bar = spacesGroup(display: display)?.frame,
+                      SpaceDragGeometry.framesFit(target.frames, inside: bar),
+                      target.button.bool(kAXEnabledAttribute) == true,
+                      target.button.actionNames.contains(kAXPressAction), canContinue() else { return false }
+                return true
+            },
+            pressFallback: {
+                trace("  Space thumbnail index=\(target.index) click left overview open; trying AXPress")
+                guard canContinue() else { return false }
+                return target.button.perform(kAXPressAction)
+            }
+        )
         if !closed { trace("  Mission Control closure after thumbnail selection was not confirmed") }
         return closed
     }

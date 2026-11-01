@@ -158,7 +158,7 @@ final class Restorer {
         }
         if WeChatStartup.shouldPrepare(snapshot: snapshot, mode: mode) {
             progress("Opening WeChat…")
-            if let outcome = WeChatOpener.openIfNeeded(cancellation: cancellation) {
+            if let outcome = WeChatOpener.openIfNeeded(cancellation: cancellation, trace: log) {
                 log("→ \(RestoreStep.openWeChat)")
                 logOutcome(outcome)
                 report.entries.append(.init(step: .openWeChat, outcome: outcome))
@@ -269,7 +269,7 @@ final class Restorer {
         }
         switch step {
         case .openWeChat:
-            return WeChatOpener.openIfNeeded(cancellation: cancellation) ?? .skipped("no startup panel")
+            return WeChatOpener.openIfNeeded(cancellation: cancellation, trace: log) ?? .skipped("no startup panel")
         case .createDesktops(let display, let count):
             return createDesktops(display: display, count: count)
         case .setMinimized(let window, let minimized):
