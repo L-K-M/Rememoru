@@ -13,6 +13,18 @@ enum MissionControl {
     static let selectionSettleDelay: TimeInterval = 1
     static let activeStableDelay: TimeInterval = 0.5
     static let selectionSettleTimeout: TimeInterval = 3
+    // On macOS 27, stable AX frames precede input readiness. Native clicks
+    // around 0.7 seconds were ignored; later selections took effect.
+    private static var openingDelay: TimeInterval {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? 1 : 0.3
+    }
+
+    static func thumbnailsReady(
+        openedAt: Date, stableSince: Date, now: Date = Date(), minimumOpeningDelay: TimeInterval = openingDelay
+    ) -> Bool {
+        now.timeIntervalSince(openedAt) >= minimumOpeningDelay
+            && now.timeIntervalSince(stableSince) >= 0.3
+    }
 
     private typealias CoreDockSendNotificationFn = @convention(c) (CFString, Int32) -> Int32
     private static let sendNotification: CoreDockSendNotificationFn? = {
@@ -46,9 +58,15 @@ enum MissionControl {
     ) -> Observation<Node> {
         var allReadable = !hosts.isEmpty
         for host in hosts {
-            guard let children = children(host) else { allReadable = false; continue }
-            if let group = children.first(where: { identifier($0) == "mc" }) { return .open(group) }
-            if children.contains(where: { identifier($0) == "mc.display" }) { return .open(host) }
+            guard let hostChildren = children(host) else { allReadable = false; continue }
+            for child in hostChildren {
+                guard let id = identifier(child), id == "mc" || id == "mc.display" else { continue }
+                // WindowManager and Dock can retain empty overview groups
+                // after dismissal. An unreadable group is still unknown.
+                guard let contents = children(child) else { allReadable = false; continue }
+                guard !contents.isEmpty else { continue }
+                return .open(id == "mc" ? child : host)
+            }
         }
         return allReadable ? .closed : .unavailable
     }
@@ -131,6 +149,21 @@ enum MissionControl {
         // within the closing deadline until absence is confirmed.
         guard let open = isOpen() else { return nil }
         return open ? nil : true
+    }
+
+    /// Confirms overview closure only; callers must verify the active Space.
+    static func selectWithFallback(
+        canContinue: () -> Bool, press: () -> Bool, waitUntilClosed: () -> Bool,
+        isOpen: () -> Bool?, validateFallback: () -> Bool, pressFallback: () -> Bool
+    ) -> Bool {
+        guard canContinue(), press(), canContinue() else { return false }
+        if waitUntilClosed() { return canContinue() }
+        guard canContinue(), let open = isOpen(), canContinue() else { return false }
+        guard open else { return true }
+        guard validateFallback(), canContinue(), let stillOpen = isOpen(), canContinue() else { return false }
+        guard stillOpen else { return true }
+        guard pressFallback(), canContinue() else { return false }
+        return waitUntilClosed() && canContinue()
     }
 
     private static func toggle() {
@@ -259,13 +292,15 @@ enum MissionControl {
     ) -> Bool {
         guard canContinue() else { return false }
         defer { close() }
-        guard open() != nil, canContinue(), expandSpaces(display: display, canContinue: canContinue) else { return false }
+        guard open() != nil, canContinue() else { return false }
+        let openedAt = Date()
+        guard expandSpaces(display: display, canContinue: canContinue) else { return false }
         // Dock publishes its AX tree before thumbnail actions are ready.
         // hs.spaces.gotoSpace likewise waits for the opening animation.
         Thread.sleep(forTimeInterval: 0.3)
         var previousFrames: [Rect] = []
         var stableSince = Date()
-        guard let button = wait(timeout: 2, { () -> AXElement? in
+        guard let target = wait(timeout: 2, { () -> (button: AXElement, index: Int, frames: [Rect])? in
             guard canContinue() else { return nil }
             let buttons = spaceButtons(display: display).sorted { ($0.frame?.x ?? .infinity) < ($1.frame?.x ?? .infinity) }
             let frames = buttons.compactMap(thumbnailFrame)
@@ -277,23 +312,51 @@ enum MissionControl {
                 return nil
             }
             if frames != previousFrames { previousFrames = frames; stableSince = Date() }
-            guard Date().timeIntervalSince(stableSince) >= 0.3,
+            guard thumbnailsReady(openedAt: openedAt, stableSince: stableSince),
                   let index = index(), buttons.indices.contains(index) else { return nil }
-            return buttons[index]
+            return (buttons[index], index, frames)
         }), canContinue(),
-              AXUIElementSetMessagingTimeout(button.element, AXElement.messagingTimeout) == .success,
-              button.bool(kAXEnabledAttribute) == true, canContinue() else {
+              AXUIElementSetMessagingTimeout(target.button.element, AXElement.messagingTimeout) == .success,
+              target.button.bool(kAXEnabledAttribute) == true, canContinue() else {
             trace("  Space thumbnail unavailable or selection cancelled")
             return false
         }
         // Timeout belongs to this exact AX object, not its application.
-        guard pressThumbnail(button, canContinue: canContinue), canContinue() else {
-            trace("  Space thumbnail press was not confirmed")
-            return false
-        }
-        let closed = wait(timeout: 2) {
-            closureConfirmation(isOpen: { openState }, canContinue: canContinue)
-        } == true
+        let closed = selectWithFallback(
+            canContinue: canContinue,
+            press: {
+                let pressed = pressThumbnail(target.button, canContinue: canContinue)
+                if !pressed { trace("  Space thumbnail press was not confirmed") }
+                return pressed
+            },
+            waitUntilClosed: {
+                wait(timeout: 2) {
+                    closureConfirmation(isOpen: { openState }, canContinue: canContinue)
+                } == true
+            },
+            isOpen: { openState },
+            validateFallback: {
+                // A delivered pointer click can leave WindowManager's overview
+                // open. Try its native action once, only on the unchanged target.
+                guard canContinue(), isWindowManagerThumbnail(target.button),
+                      index() == target.index, canContinue() else { return false }
+                let fresh = spaceButtons(display: display).sorted { ($0.frame?.x ?? .infinity) < ($1.frame?.x ?? .infinity) }
+                guard fresh.count == target.frames.count, fresh.indices.contains(target.index),
+                      CFEqual(fresh[target.index].element, target.button.element),
+                      fresh.allSatisfy({ $0.role == kAXButtonRole }),
+                      fresh.compactMap(thumbnailFrame) == target.frames,
+                      let bar = spacesGroup(display: display)?.frame,
+                      SpaceDragGeometry.framesFit(target.frames, inside: bar),
+                      target.button.bool(kAXEnabledAttribute) == true,
+                      target.button.actionNames.contains(kAXPressAction), canContinue() else { return false }
+                return true
+            },
+            pressFallback: {
+                trace("  Space thumbnail index=\(target.index) click left overview open; trying AXPress")
+                guard canContinue() else { return false }
+                return target.button.perform(kAXPressAction)
+            }
+        )
         if !closed { trace("  Mission Control closure after thumbnail selection was not confirmed") }
         return closed
     }

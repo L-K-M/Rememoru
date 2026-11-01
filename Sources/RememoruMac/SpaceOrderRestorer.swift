@@ -109,11 +109,20 @@ enum SpaceOrderRestorer {
             }
             let actual = survey(display: display, original: original, canContinue: canContinue, trace: log)
             log("  observed Dock Space order after move: \(actual.map { String(describing: $0) } ?? "unavailable")")
-            guard let actual, actual == move.expectedOrder else {
-                return .failed("Mission Control's Space order did not match the requested move")
-            }
+            let outcome = verifyMoveOutcome(actual: actual, expected: move.expectedOrder)
+            guard case .done = outcome, let actual else { return outcome }
             current = actual
             log("  confirmed Dock Space order: \(actual)")
+        }
+        return .done
+    }
+
+    static func verifyMoveOutcome(actual: [UInt64]?, expected: [UInt64]) -> RestoreReport.Outcome {
+        guard let actual else {
+            return .failed("could not verify Mission Control's Space order after the move; wait for Space transitions to finish, then retry")
+        }
+        guard actual == expected else {
+            return .failed("Mission Control's Space order did not match the requested move")
         }
         return .done
     }
@@ -240,8 +249,9 @@ enum SpaceOrderRestorer {
     ) -> Bool {
         guard canContinue(), sameMembership(spaces(on: display), as: original),
               let source = current.firstIndex(of: move.spaceID), let target = current.firstIndex(of: move.beforeID),
-              canContinue(), MissionControl.open() != nil, canContinue(),
-              MissionControl.expandSpaces(display: display.id, canContinue: canContinue) else { return false }
+              canContinue(), MissionControl.open() != nil, canContinue() else { return false }
+        let openedAt = Date()
+        guard MissionControl.expandSpaces(display: display.id, canContinue: canContinue) else { return false }
         // The AX list appears before Dock finishes laying out thumbnails.
         // Require settled geometry before binding surveyed IDs to buttons.
         var previousFrames: [Rect] = []
@@ -262,7 +272,7 @@ enum SpaceOrderRestorer {
                 previousFrames = frames
                 stableSince = Date()
             }
-            return Date().timeIntervalSince(stableSince) >= 0.3 ? buttons : nil
+            return MissionControl.thumbnailsReady(openedAt: openedAt, stableSince: stableSince) ? buttons : nil
         }), let bar = MissionControl.spacesGroup(display: display.id)?.frame else { return false }
         let frames = buttons.compactMap(MissionControl.thumbnailFrame)
         guard frames.count == buttons.count,

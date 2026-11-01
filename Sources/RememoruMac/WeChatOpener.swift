@@ -20,7 +20,9 @@ enum WeChatOpener {
 
     /// nil means WeChat is not running, is ready, or has no recognized
     /// startup panel. AXWindows can omit a main window on another Space.
-    static func openIfNeeded(cancellation: CancellationFlag) -> RestoreReport.Outcome? {
+    static func openIfNeeded(
+        cancellation: CancellationFlag, trace: @escaping (String) -> Void = { _ in }
+    ) -> RestoreReport.Outcome? {
         guard !cancellation.isCancelled,
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: WeChatStartup.bundleID).first
         else { return nil }
@@ -31,7 +33,7 @@ enum WeChatOpener {
         return open(observe: { deadline in
             observation(application: application, pid: app.processIdentifier, elements: elements,
                         previousWindowIDs: &previousWindowIDs, deadline: deadline, cancellation: cancellation,
-                        reportFailure: { failureReason = $0 })
+                        reportFailure: { failureReason = $0 }, trace: trace)
         }, cancellation: cancellation, failureReason: { failureReason })
     }
 
@@ -80,7 +82,7 @@ enum WeChatOpener {
     private static func observation(
         application: AXElement, pid: pid_t, elements: WindowElements,
         previousWindowIDs: inout Set<UInt32>, deadline: Date, cancellation: CancellationFlag,
-        reportFailure: @escaping (String) -> Void = { _ in }
+        reportFailure: @escaping (String) -> Void = { _ in }, trace: @escaping (String) -> Void = { _ in }
     ) -> Observation {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
         guard canContinue() else { return .waiting }
@@ -102,7 +104,7 @@ enum WeChatOpener {
             inspect: { id in
                 guard let window = available[id] else { return .waiting }
                 return inspect(window: window, application: application, pid: pid, elements: elements,
-                               deadline: deadline, cancellation: cancellation, reportFailure: reportFailure)
+                               deadline: deadline, cancellation: cancellation, reportFailure: reportFailure, trace: trace)
             },
             deadline: deadline, cancellation: cancellation
         )
@@ -173,7 +175,8 @@ enum WeChatOpener {
 
     private static func inspect(
         window: AXElement, application: AXElement, pid: pid_t, elements: WindowElements,
-        deadline: Date, cancellation: CancellationFlag, reportFailure: @escaping (String) -> Void
+        deadline: Date, cancellation: CancellationFlag, reportFailure: @escaping (String) -> Void,
+        trace: @escaping (String) -> Void
     ) -> Observation {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
         return classify(openButton: {
@@ -204,7 +207,7 @@ enum WeChatOpener {
                     findButton: {
                         openButton(in: window, deadline: openingDeadline, cancellation: cancellation)
                     },
-                    deadline: openingDeadline, cancellation: cancellation, reportFailure: reportFailure, isReady: {
+                    deadline: openingDeadline, cancellation: cancellation, reportFailure: reportFailure, trace: trace, isReady: {
                         let current = observation(
                             application: application, pid: pid, elements: elements,
                             previousWindowIDs: &currentIDs, deadline: openingDeadline, cancellation: cancellation

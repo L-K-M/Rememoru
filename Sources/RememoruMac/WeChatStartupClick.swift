@@ -18,6 +18,7 @@ enum WeChatStartupClick {
     static func click(
         window: AXElement, application: AXElement, pid: pid_t, findButton: () -> AXElement?,
         deadline: Date, cancellation: CancellationFlag, reportFailure: (String) -> Void = { _ in },
+        trace: (String) -> Void = { _ in },
         isReady: () -> Bool
     ) -> Bool {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
@@ -127,8 +128,8 @@ enum WeChatStartupClick {
                 return validatedTarget(button)
             },
             matches: { target in
-                hitMatches(button: target.button, at: target.point, canContinue: canContinue,
-                           reportMiss: { lastFailure = $0 })
+                hitMatches(button: target.button, frame: target.frame, at: target.point, canContinue: canContinue,
+                           reportMiss: { lastFailure = $0 }, trace: trace)
             },
             perform: { target in
                 // Re-read all guards after readiness checks, immediately
@@ -141,8 +142,8 @@ enum WeChatStartupClick {
                     lastFailure = "WeChat is no longer frontmost"
                     return false
                 }
-                let hit = hitMatches(button: current.button, at: current.point, canContinue: canContinue,
-                                     reportMiss: { lastFailure = $0 })
+                let hit = hitMatches(button: current.button, frame: current.frame, at: current.point, canContinue: canContinue,
+                                     reportMiss: { lastFailure = $0 }, trace: trace)
                 guard canContinue(), WeChatStartup.canClickOpenButton(
                     isButton: true, labels: current.labels, isEnabled: true,
                     isFrontmost: frontmost, isWindowOnscreen: true, hitMatchesButton: hit
@@ -222,8 +223,8 @@ enum WeChatStartupClick {
     }
 
     private static func hitMatches(
-        button: AXElement, at point: CGPoint, canContinue: () -> Bool,
-        reportMiss: (String) -> Void
+        button: AXElement, frame: Rect, at point: CGPoint, canContinue: () -> Bool,
+        reportMiss: (String) -> Void, trace: (String) -> Void
     ) -> Bool {
         var raw: AXUIElement?
         guard canContinue() else { return false }
@@ -243,7 +244,21 @@ enum WeChatStartupClick {
             hit = current.element(kAXParentAttribute)
         }
         guard canContinue() else { return false }
-        let role = AXElement(element: raw).role ?? "unknown role"
+        let target = AXElement(element: raw)
+        let role = target.role ?? "unknown role"
+        guard canContinue() else { return false }
+        let pid = target.pid.map(String.init) ?? "unknown"
+        guard canContinue() else { return false }
+        let windowID = target.windowID.map(String.init) ?? "unknown"
+        guard canContinue() else { return false }
+        let hitFrame = target.frame.map(describe) ?? "unknown"
+        var labels: [String] = []
+        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
+            guard canContinue() else { return false }
+            if let label = target.string(attribute) { labels.append(label) }
+        }
+        let openLabel = WeChatStartup.isOpenButton(isButton: role == kAXButtonRole, labels: labels)
+        trace("  WeChat startup hit: role=\(role), Open WeChat label=\(openLabel), pid=\(pid), window=\(windowID), frame=\(hitFrame); expected frame=\(describe(frame))")
         reportMiss("the pointer target is not the Open WeChat button (hit \(role))")
         return false
     }
