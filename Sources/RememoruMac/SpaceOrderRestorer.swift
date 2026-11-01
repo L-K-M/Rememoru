@@ -247,6 +247,7 @@ enum SpaceOrderRestorer {
         _ move: SpaceOrdering.Move, current: [UInt64], display: LiveDisplay, original: [LiveSpace],
         canContinue: () -> Bool, trace: (String) -> Void
     ) -> Bool {
+        let openedAt = Date()
         guard canContinue(), sameMembership(spaces(on: display), as: original),
               let source = current.firstIndex(of: move.spaceID), let target = current.firstIndex(of: move.beforeID),
               canContinue(), MissionControl.open() != nil, canContinue(),
@@ -271,7 +272,7 @@ enum SpaceOrderRestorer {
                 previousFrames = frames
                 stableSince = Date()
             }
-            return Date().timeIntervalSince(stableSince) >= 0.3 ? buttons : nil
+            return MissionControl.thumbnailsReady(openedAt: openedAt, stableSince: stableSince) ? buttons : nil
         }), let bar = MissionControl.spacesGroup(display: display.id)?.frame else { return false }
         let frames = buttons.compactMap(MissionControl.thumbnailFrame)
         guard frames.count == buttons.count,

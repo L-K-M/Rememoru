@@ -13,6 +13,18 @@ enum MissionControl {
     static let selectionSettleDelay: TimeInterval = 1
     static let activeStableDelay: TimeInterval = 0.5
     static let selectionSettleTimeout: TimeInterval = 3
+    // On macOS 27, stable AX frames precede input readiness. Native clicks
+    // around 0.7 seconds were ignored; later selections took effect.
+    private static var openingDelay: TimeInterval {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? 1 : 0.3
+    }
+
+    static func thumbnailsReady(
+        openedAt: Date, stableSince: Date, now: Date = Date(), minimumOpeningDelay: TimeInterval = openingDelay
+    ) -> Bool {
+        now.timeIntervalSince(openedAt) >= minimumOpeningDelay
+            && now.timeIntervalSince(stableSince) >= 0.3
+    }
 
     private typealias CoreDockSendNotificationFn = @convention(c) (CFString, Int32) -> Int32
     private static let sendNotification: CoreDockSendNotificationFn? = {
@@ -46,9 +58,15 @@ enum MissionControl {
     ) -> Observation<Node> {
         var allReadable = !hosts.isEmpty
         for host in hosts {
-            guard let children = children(host) else { allReadable = false; continue }
-            if let group = children.first(where: { identifier($0) == "mc" }) { return .open(group) }
-            if children.contains(where: { identifier($0) == "mc.display" }) { return .open(host) }
+            guard let hostChildren = children(host) else { allReadable = false; continue }
+            for child in hostChildren {
+                guard let id = identifier(child), id == "mc" || id == "mc.display" else { continue }
+                // WindowManager and Dock can retain empty overview groups
+                // after dismissal. An unreadable group is still unknown.
+                guard let contents = children(child) else { allReadable = false; continue }
+                guard !contents.isEmpty else { continue }
+                return .open(id == "mc" ? child : host)
+            }
         }
         return allReadable ? .closed : .unavailable
     }
@@ -274,6 +292,7 @@ enum MissionControl {
     ) -> Bool {
         guard canContinue() else { return false }
         defer { close() }
+        let openedAt = Date()
         guard open() != nil, canContinue(), expandSpaces(display: display, canContinue: canContinue) else { return false }
         // Dock publishes its AX tree before thumbnail actions are ready.
         // hs.spaces.gotoSpace likewise waits for the opening animation.
@@ -292,7 +311,7 @@ enum MissionControl {
                 return nil
             }
             if frames != previousFrames { previousFrames = frames; stableSince = Date() }
-            guard Date().timeIntervalSince(stableSince) >= 0.3,
+            guard thumbnailsReady(openedAt: openedAt, stableSince: stableSince),
                   let index = index(), buttons.indices.contains(index) else { return nil }
             return (buttons[index], index, frames)
         }), canContinue(),
