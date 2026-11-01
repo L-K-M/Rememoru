@@ -247,11 +247,11 @@ enum SpaceOrderRestorer {
         _ move: SpaceOrdering.Move, current: [UInt64], display: LiveDisplay, original: [LiveSpace],
         canContinue: () -> Bool, trace: (String) -> Void
     ) -> Bool {
-        let openedAt = Date()
         guard canContinue(), sameMembership(spaces(on: display), as: original),
               let source = current.firstIndex(of: move.spaceID), let target = current.firstIndex(of: move.beforeID),
-              canContinue(), MissionControl.open() != nil, canContinue(),
-              MissionControl.expandSpaces(display: display.id, canContinue: canContinue) else { return false }
+              canContinue(), MissionControl.open() != nil, canContinue() else { return false }
+        let openedAt = Date()
+        guard MissionControl.expandSpaces(display: display.id, canContinue: canContinue) else { return false }
         // The AX list appears before Dock finishes laying out thumbnails.
         // Require settled geometry before binding surveyed IDs to buttons.
         var previousFrames: [Rect] = []

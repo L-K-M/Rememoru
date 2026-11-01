@@ -292,8 +292,9 @@ enum MissionControl {
     ) -> Bool {
         guard canContinue() else { return false }
         defer { close() }
+        guard open() != nil, canContinue() else { return false }
         let openedAt = Date()
-        guard open() != nil, canContinue(), expandSpaces(display: display, canContinue: canContinue) else { return false }
+        guard expandSpaces(display: display, canContinue: canContinue) else { return false }
         // Dock publishes its AX tree before thumbnail actions are ready.
         // hs.spaces.gotoSpace likewise waits for the opening animation.
         Thread.sleep(forTimeInterval: 0.3)
