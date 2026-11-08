@@ -23,7 +23,7 @@ enum WeChatStartupClick {
     ) -> Bool {
         let canContinue = { !cancellation.isCancelled && Date() < deadline }
         func fail(_ reason: String) -> Bool {
-            reportFailure(Date() >= deadline ? "the startup action timed out" : reason)
+            reportFailure(Date() >= deadline ? "the startup action timed out: \(reason)" : reason)
             return false
         }
         guard canContinue(), window.pid == pid, canContinue(),
@@ -71,6 +71,12 @@ enum WeChatStartupClick {
         }
 
         var lastFailure = "the pointer target is not the Open WeChat button"
+        var previousTrace: String?
+        func traceHit(_ message: String) {
+            guard message != previousTrace else { return }
+            previousTrace = message
+            trace(message)
+        }
         func validatedTarget(_ button: AXElement, expectedFrame: Rect? = nil) -> ClickTarget? {
             guard canContinue(), window.pid == pid, canContinue(), window.windowID == windowID,
                   canContinue(), button.pid == pid, canContinue(), button.windowID == windowID,
@@ -118,7 +124,7 @@ enum WeChatStartupClick {
         // rediscover it and hit-test its current frame, while a main window
         // appearing during the wait needs no click at all.
         let completed = performWhenReady(
-            timeout: min(2, deadline.timeIntervalSinceNow), canContinue: canContinue, isReady: isReady,
+            deadline: deadline, canContinue: canContinue, isReady: isReady,
             discover: { () -> ClickTarget? in
                 guard canContinue(), window.pid == pid, canContinue(), window.windowID == windowID,
                       canContinue(), let button = findButton(), canContinue() else {
@@ -129,7 +135,7 @@ enum WeChatStartupClick {
             },
             matches: { target in
                 hitMatches(button: target.button, frame: target.frame, at: target.point, canContinue: canContinue,
-                           reportMiss: { lastFailure = $0 }, trace: trace)
+                           reportMiss: { lastFailure = $0 }, trace: traceHit)
             },
             perform: { target in
                 // Re-read all guards after readiness checks, immediately
@@ -143,7 +149,7 @@ enum WeChatStartupClick {
                     return false
                 }
                 let hit = hitMatches(button: current.button, frame: current.frame, at: current.point, canContinue: canContinue,
-                                     reportMiss: { lastFailure = $0 }, trace: trace)
+                                     reportMiss: { lastFailure = $0 }, trace: traceHit)
                 guard canContinue(), WeChatStartup.canClickOpenButton(
                     isButton: true, labels: current.labels, isEnabled: true,
                     isFrontmost: frontmost, isWindowOnscreen: true, hitMatchesButton: hit
@@ -168,36 +174,37 @@ enum WeChatStartupClick {
     }
 
     static func performWhenReady<Target>(
-        timeout: TimeInterval, interval: TimeInterval = 0.05,
+        deadline: Date, interval: TimeInterval = 0.05,
         canContinue: () -> Bool, isReady: () -> Bool, discover: () -> Target?,
         matches: (Target) -> Bool, perform: (Target) -> Bool
     ) -> Bool {
+        func canProceed() -> Bool { canContinue() && Date() < deadline }
         var actionDelivered = false
-        let completed = MissionControl.wait(timeout: timeout, interval: interval) { () -> Bool? in
-            guard canContinue() else { return false }
+        let completed = MissionControl.wait(timeout: max(0, deadline.timeIntervalSinceNow), interval: interval) { () -> Bool? in
+            guard canProceed() else { return false }
             let ready = isReady()
-            guard canContinue() else { return false }
+            guard canProceed() else { return false }
             if ready { return true }
             let discovered = discover()
-            guard canContinue() else { return false }
+            guard canProceed() else { return false }
             guard let target = discovered else { return nil }
             let matched = matches(target)
-            guard canContinue() else { return false }
+            guard canProceed() else { return false }
             guard matched else { return nil }
             let readyBeforeAction = isReady()
-            guard canContinue() else { return false }
+            guard canProceed() else { return false }
             if readyBeforeAction { return true }
             actionDelivered = perform(target)
             if actionDelivered { return true }
-            guard canContinue() else { return false }
+            guard canProceed() else { return false }
             return nil
         }
-        // Cancellation during mouse-up release cannot undo a delivered click.
+        // Cancellation or expiry during release cannot undo a delivered click.
         if actionDelivered { return true }
-        if completed == true { return canContinue() }
-        guard canContinue() else { return false }
+        if completed == true { return canProceed() }
+        guard canProceed() else { return false }
         let ready = isReady()
-        return ready && canContinue()
+        return ready && canProceed()
     }
 
     private static func isFrontmost(_ pid: pid_t) -> Bool {
@@ -232,6 +239,7 @@ enum WeChatStartupClick {
             AXElement.systemWide.element, Float(point.x), Float(point.y), &raw
         )
         guard error == .success, let raw else {
+            trace("  WeChat startup hit unavailable: AX error=\(error.rawValue), caller trusted=\(AXIsProcessTrusted())")
             reportMiss("the pointer target is unavailable (AX error \(error.rawValue))")
             return false
         }
